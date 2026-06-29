@@ -1,0 +1,2450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PRD Generator — Powered by Groq</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg:          #08090e;
+  --surface:     #0f1019;
+  --surface2:    #181924;
+  --surface3:    #1e2030;
+  --border:      #252638;
+  --border2:     #313250;
+  --accent:      #f55036;
+  --accent2:     #ff7b5e;
+  --accent-glow: rgba(245, 80, 54, 0.12);
+  --green:       #10b981;
+  --yellow:      #f59e0b;
+  --red:         #ef4444;
+  --blue:        #60a5fa;
+  --text:        #e2e4f0;
+  --text-dim:    #8890b0;
+  --text-muted:  #4a4e6a;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', sans-serif;
+  --radius: 14px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ─────────── HEADER ─────────── */
+header {
+  width: 100%;
+  padding: 18px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.logo-icon {
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rate-badge {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  border-radius: 100px;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rate-badge .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.rate-badge.warn .dot { background: var(--yellow); }
+.rate-badge.limit .dot { background: var(--red); animation: blink 1s infinite; }
+
+.btn-settings {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.btn-settings:hover { border-color: var(--accent); color: var(--accent2); }
+
+#api-key-section.hidden { display: none; }
+
+/* ─────────── FIELD / INPUT (used in inline key section) ─────────── */
+.field-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: block;
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.field-row input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 11px 14px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.field-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.field-row input::placeholder { color: var(--text-muted); }
+
+.btn-save {
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+}
+
+.btn-save:hover { opacity: 0.88; }
+
+/* ─────────── MAIN ─────────── */
+main {
+  width: 100%;
+  max-width: 860px;
+  padding: 56px 24px 100px;
+  flex: 1;
+}
+
+/* ─────────── HERO ─────────── */
+.hero { text-align: center; margin-bottom: 48px; }
+
+.groq-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 100px;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 18px;
+}
+
+.groq-pill .flash { color: var(--accent2); }
+
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #ffffff 20%, var(--accent2) 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 14px;
+}
+
+.hero p {
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: 540px;
+  margin: 0 auto;
+}
+
+/* ─────────── BTN OPEN SETTINGS (legacy) ─────────── */
+.btn-open-settings { display: none; }
+
+/* ─────────── INPUT CARD ─────────── */
+.input-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 26px;
+  margin-bottom: 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.input-label {
+  font-size: 0.71rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  display: block;
+}
+
+textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.97rem;
+  line-height: 1.75;
+  resize: none;
+  min-height: 130px;
+}
+
+textarea::placeholder { color: var(--text-muted); }
+
+.input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.char-count {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.shortcut-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.shortcut-hint kbd {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text-dim);
+}
+
+/* ─────────── GENERATE BTN ─────────── */
+.btn-generate {
+  width: 100%;
+  padding: 15px;
+  background: linear-gradient(135deg, var(--accent), #e03420);
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 0.97rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+  letter-spacing: -0.01em;
+  box-shadow: 0 4px 24px rgba(245, 80, 54, 0.25);
+}
+
+.btn-generate:hover:not(:disabled) {
+  opacity: 0.92;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 30px rgba(245, 80, 54, 0.35);
+}
+
+.btn-generate:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ─────────── EXAMPLES ─────────── */
+.examples { margin-top: 24px; }
+
+.examples-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.example-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 6px 14px;
+  border-radius: 100px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.chip:hover { border-color: var(--accent); color: var(--accent2); background: var(--accent-glow); }
+
+/* ─────────── PROGRESS ─────────── */
+#progress-area {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 26px;
+  margin-top: 22px;
+}
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.progress-label { font-size: 0.88rem; color: var(--text-dim); }
+
+.progress-meta {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.progress-bar-wrap {
+  background: var(--surface2);
+  border-radius: 100px;
+  height: 3px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 100px;
+  width: 0%;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─────────── RATE LIMIT WARNING ─────────── */
+#rate-warning {
+  display: none;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 0.83rem;
+  color: #fcd34d;
+  margin-top: 14px;
+}
+
+/* ─────────── ERROR ─────────── */
+.error-msg {
+  display: none;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 10px;
+  padding: 14px 18px;
+  color: #fca5a5;
+  font-size: 0.88rem;
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
+/* ─────────── OUTPUT ─────────── */
+#output-area { display: none; margin-top: 28px; }
+
+.output-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.output-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.output-title .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes blink  { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+.btn-group { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.btn-tool {
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-tool:hover { border-color: var(--accent); background: var(--accent-glow); }
+
+.btn-tool.primary {
+  background: linear-gradient(135deg, var(--accent), #e03420);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 2px 12px rgba(245, 80, 54, 0.2);
+}
+
+.btn-tool.primary:hover { opacity: 0.88; background: linear-gradient(135deg, var(--accent), #e03420); }
+
+/* ─────────── PRD PREVIEW ─────────── */
+#prd-preview {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 44px 50px;
+  line-height: 1.78;
+  color: var(--text);
+  font-size: 0.94rem;
+  max-height: 680px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+
+#prd-preview::-webkit-scrollbar { width: 5px; }
+#prd-preview::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+#prd-preview h1 {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 5px;
+  background: linear-gradient(135deg, #fff 20%, var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+#prd-preview .prd-date {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  margin-bottom: 28px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+#prd-preview h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent2);
+  margin: 34px 0 14px;
+  padding: 9px 14px;
+  background: var(--accent-glow);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#prd-preview h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 22px 0 8px;
+}
+
+#prd-preview h4 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin: 14px 0 6px;
+}
+
+#prd-preview p { color: var(--text-dim); margin-bottom: 10px; }
+
+#prd-preview ul, #prd-preview ol {
+  padding-left: 20px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+#prd-preview li { margin-bottom: 5px; }
+
+#prd-preview code {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  background: var(--surface2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent2);
+  border: 1px solid var(--border2);
+}
+
+#prd-preview pre {
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: #9aa3c4;
+  line-height: 1.65;
+}
+
+#prd-preview pre code {
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+#prd-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.83rem;
+}
+
+#prd-preview th {
+  background: var(--surface2);
+  color: var(--accent2);
+  font-weight: 700;
+  padding: 9px 13px;
+  text-align: left;
+  border: 1px solid var(--border2);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#prd-preview td {
+  padding: 8px 13px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  vertical-align: top;
+}
+
+#prd-preview tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+
+#prd-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 20px 0;
+}
+
+#prd-preview strong { color: var(--text); }
+
+#prd-preview blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 14px;
+  color: var(--text-dim);
+  margin: 10px 0;
+  font-style: italic;
+}
+
+.sn {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid rgba(245,80,54,0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* ─────────── BRIEF CARD ─────────── */
+#brief-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  animation: fadeSlide 0.35s ease;
+}
+
+@keyframes fadeSlide {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.brief-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 22px;
+  background: linear-gradient(135deg, rgba(245,80,54,0.08), rgba(255,123,94,0.04));
+  border-bottom: 1px solid var(--border);
+}
+
+.brief-icon { font-size: 1.4rem; flex-shrink: 0; }
+
+.brief-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--accent2);
+  margin-bottom: 2px;
+}
+
+.brief-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+#brief-body {
+  padding: 18px 22px;
+}
+
+.brief-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  align-items: flex-start;
+  font-size: 0.85rem;
+}
+
+.brief-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-top: 2px;
+  min-width: 110px;
+  flex-shrink: 0;
+}
+
+.brief-value {
+  color: var(--text-dim);
+  line-height: 1.55;
+  flex: 1;
+}
+
+.brief-value strong { color: var(--text); font-weight: 600; }
+
+.brief-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text-dim);
+  margin: 2px 3px 2px 0;
+}
+
+.brief-continue {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brief-continue .mini-spinner {
+  width: 12px; height: 12px;
+  border: 1.5px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ─────────── TECH CONFIRM PANEL ─────────── */
+.tech-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.tech-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tech-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tech-input {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+}
+
+.tech-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.tech-input::placeholder { color: var(--text-muted); }
+
+.btn-confirm-generate {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--accent), #e03420);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.2s, transform 0.15s;
+  box-shadow: 0 4px 20px rgba(245, 80, 54, 0.28);
+  letter-spacing: -0.01em;
+}
+
+.btn-confirm-generate:hover:not(:disabled) {
+  opacity: 0.91;
+  transform: translateY(-1px);
+}
+
+.btn-confirm-generate:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@media (max-width: 600px) {
+  .tech-grid { grid-template-columns: 1fr; }
+}
+
+/* ─────────── FOOTER ─────────── */
+footer {
+  width: 100%;
+  padding: 18px 40px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+footer a { color: var(--text-muted); text-decoration: none; }
+footer a:hover { color: var(--accent2); }
+
+/* ─────────── API KEY GUIDE STEPS ─────────── */
+.guide-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+
+.step-body { flex: 1; padding-bottom: 2px; }
+
+.step-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.step-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.step-btn {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #e03420);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.step-btn:hover { opacity: 0.85; }
+
+.step-connector {
+  width: 1px;
+  height: 18px;
+  background: var(--border2);
+  margin-left: 13px;
+  margin-top: 0;
+}
+
+.modal-tab:hover { color: var(--text-dim) !important; }
+.modal-tab.active { color: var(--accent2) !important; border-bottom-color: var(--accent) !important; }
+
+/* ─────────── RESPONSIVE ─────────── */
+@media (max-width: 600px) {
+  header { padding: 14px 18px; }
+  main { padding: 36px 16px 80px; }
+  #prd-preview { padding: 22px 18px; }
+  .rate-info-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ═══════════ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <span>PRD Generator</span>
+  </div>
+  <div class="header-right">
+    <div class="rate-badge" id="rate-badge">
+      <div class="dot"></div>
+      <span id="rate-badge-text">Ready</span>
+    </div>
+    <button class="btn-settings" id="key-status-btn" onclick="toggleKeySection()" title="API Key">🔑 <span id="key-btn-label">Add Key</span></button>
+  </div>
+</header>
+
+
+<!-- ═══════════ MAIN ═══════════ -->
+<main>
+  <div class="hero">
+    <div class="groq-pill">
+      <span class="flash">⚡</span> Powered by Groq + Llama 3.3 70B
+    </div>
+    <h1>One Line.<br>Full PRD.</h1>
+    <p>Type anything — "blog in Java fullstack", "AI chatbot in Python", "data dashboard" — and get a complete 16-section PRD with architecture, schema, API endpoints, and deployment guide. In seconds.</p>
+  </div>
+
+  <!-- ═══ INLINE API KEY SECTION ═══ -->
+  <div id="api-key-section" class="hidden">
+
+    <!-- Collapsed view (key already set) -->
+    <div id="key-saved-bar" class="hidden" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 18px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);border-radius:12px;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="color:var(--green);font-size:1rem;">✓</span>
+          <span style="font-size:0.85rem;color:var(--text-dim);">Groq API key saved. <span id="key-preview" style="font-family:var(--mono);color:var(--text-muted);font-size:0.78rem;"></span></span>
+        </div>
+        <button onclick="showKeyEdit()" style="font-size:0.75rem;color:var(--text-muted);background:none;border:1px solid var(--border2);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--sans);">Change key</button>
+      </div>
+    </div>
+
+    <!-- Full guide (no key set, or editing) -->
+    <div id="key-guide-full">
+      <div style="background:var(--surface);border:1px solid var(--border2);border-radius:16px;overflow:hidden;margin-bottom:20px;">
+
+        <!-- Guide header -->
+        <div style="padding:20px 24px 16px;background:linear-gradient(135deg,rgba(245,80,54,0.07),rgba(255,123,94,0.03));border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:36px;height:36px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;">⚡</div>
+            <div>
+              <div style="font-size:0.95rem;font-weight:700;color:var(--text);">Get Your Free Groq API Key</div>
+              <div style="font-size:0.76rem;color:var(--text-muted);margin-top:2px;">60 seconds · completely free · no credit card</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Steps -->
+        <div style="padding:22px 24px;">
+          <div style="display:flex;flex-direction:column;gap:0;margin-bottom:22px;">
+
+            <div class="guide-step">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <div class="step-title">Open the Groq Console</div>
+                <div class="step-desc">Click the button below — it opens Groq's site in a new tab.</div>
+                <a href="https://console.groq.com" target="_blank" class="step-btn">Open console.groq.com →</a>
+              </div>
+            </div>
+
+            <div class="step-connector"></div>
+
+            <div class="guide-step">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <div class="step-title">Sign up or Log in</div>
+                <div class="step-desc">Click <strong style="color:var(--text);">Sign Up</strong> top-right. Google login works — no password needed.</div>
+              </div>
+            </div>
+
+            <div class="step-connector"></div>
+
+            <div class="guide-step">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <div class="step-title">Go to "API Keys" in the sidebar</div>
+                <div class="step-desc">After logging in, look in the left sidebar for <strong style="color:var(--text);">API Keys</strong> — it's near the bottom.</div>
+              </div>
+            </div>
+
+            <div class="step-connector"></div>
+
+            <div class="guide-step">
+              <div class="step-num">4</div>
+              <div class="step-body">
+                <div class="step-title">Create a new key</div>
+                <div class="step-desc">Click <strong style="color:var(--text);">Create API Key</strong>. Name it anything, e.g. <span style="font-family:var(--mono);font-size:0.79rem;color:var(--accent2);">prd-generator</span>. Hit Create.</div>
+              </div>
+            </div>
+
+            <div class="step-connector"></div>
+
+            <div class="guide-step">
+              <div class="step-num">5</div>
+              <div class="step-body">
+                <div class="step-title">Copy your key</div>
+                <div class="step-desc">It starts with <span style="font-family:var(--mono);font-size:0.79rem;color:var(--accent2);">gsk_</span>. Copy it immediately — <strong style="color:#fcd34d;">⚠ it's shown only once.</strong></div>
+              </div>
+            </div>
+
+            <div class="step-connector"></div>
+
+            <div class="guide-step" style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.2);border-radius:10px;padding:14px 14px;">
+              <div class="step-num" style="background:var(--green);">6</div>
+              <div class="step-body">
+                <div class="step-title" style="color:var(--green);">Paste it below and save</div>
+                <div class="step-desc">You're one paste away from generating PRDs instantly.</div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Input -->
+          <label class="field-label">Your Groq API Key</label>
+          <div class="field-row">
+            <input type="password" id="api-key-input" placeholder="gsk_..." autocomplete="off" />
+            <button class="btn-save" onclick="saveApiKey()">Save & Start</button>
+          </div>
+
+          <!-- Footnotes -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.15);border-radius:8px;">
+              <span style="font-size:0.95rem;flex-shrink:0;">🔒</span>
+              <div style="font-size:0.74rem;color:var(--text-muted);line-height:1.6;">Stored only in <strong style="color:var(--text-dim);">your browser</strong> — never on any server.</div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.15);border-radius:8px;">
+              <span style="font-size:0.95rem;flex-shrink:0;">🆓</span>
+              <div style="font-size:0.74rem;color:var(--text-muted);line-height:1.6;"><strong style="color:var(--text-dim);">Free tier:</strong> 14,400 req/day. No card needed.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="input-card">
+    <label class="input-label" for="idea-input">Describe Your Project Idea</label>
+    <textarea
+      id="idea-input"
+      placeholder="Even a one-liner works — e.g. 'blog website in java fullstack' or 'AI chatbot in Python'. The smarter you describe it, the richer the PRD — but we'll infer the rest either way."
+    ></textarea>
+    <div class="input-footer">
+      <span class="char-count"><span id="char-count">0</span> chars</span>
+      <span class="shortcut-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to generate</span>
+    </div>
+  </div>
+
+  <button class="btn-generate" id="gen-btn" onclick="generatePRD()">
+    ⚡ Understand My Idea
+  </button>
+
+  <!-- Examples -->
+  <div class="examples">
+    <div class="examples-label">Quick examples — try any domain →</div>
+    <div class="example-chips">
+      <div class="chip" onclick="fillExample(0)">🗂 Kanban SaaS (MERN)</div>
+      <div class="chip" onclick="fillExample(1)">☕ Blog in Java fullstack</div>
+      <div class="chip" onclick="fillExample(2)">🐍 AI chatbot in Python</div>
+      <div class="chip" onclick="fillExample(3)">🏥 Doctor Appointment App</div>
+      <div class="chip" onclick="fillExample(4)">🛒 Multi-vendor Marketplace</div>
+      <div class="chip" onclick="fillExample(5)">🤖 AI Resume Builder</div>
+      <div class="chip" onclick="fillExample(6)">📊 Data dashboard</div>
+      <div class="chip" onclick="fillExample(7)">🔐 Cybersecurity tool</div>
+    </div>
+  </div>
+
+  <!-- Rate limit warning -->
+  <div id="rate-warning"></div>
+
+  <!-- Expanded Brief Card (shown after Stage 1) -->
+  <div id="brief-card" style="display:none; margin-top:20px;">
+    <div class="brief-header">
+      <span class="brief-icon">🧠</span>
+      <div>
+        <div class="brief-title">Here's how I understood your idea</div>
+        <div class="brief-sub">Review the inferred details below — edit anything before generating.</div>
+      </div>
+    </div>
+    <div id="brief-body"></div>
+
+    <!-- ── Tech Stack Confirm Panel ── -->
+    <div id="tech-confirm-panel" style="border-top:1px solid var(--border); padding:18px 22px;">
+      <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:14px;">
+        🛠 Confirm or change your tech stack
+      </div>
+      <div class="tech-grid">
+        <div class="tech-field">
+          <label class="tech-label">Frontend</label>
+          <input class="tech-input" id="tc-frontend" placeholder="e.g. React 18, Next.js, Thymeleaf" />
+        </div>
+        <div class="tech-field">
+          <label class="tech-label">Backend</label>
+          <input class="tech-input" id="tc-backend" placeholder="e.g. Spring Boot, Node.js + Express" />
+        </div>
+        <div class="tech-field">
+          <label class="tech-label">Database</label>
+          <input class="tech-input" id="tc-database" placeholder="e.g. PostgreSQL, MySQL, MongoDB" />
+        </div>
+        <div class="tech-field">
+          <label class="tech-label">Auth</label>
+          <input class="tech-input" id="tc-auth" placeholder="e.g. JWT, OAuth2, Firebase Auth" />
+        </div>
+        <div class="tech-field">
+          <label class="tech-label">Hosting</label>
+          <input class="tech-input" id="tc-hosting" placeholder="e.g. Vercel + Render (free) · Vercel + Railway · Cloudflare Pages + Render" />
+        </div>
+        <div class="tech-field">
+          <label class="tech-label">Other Tools</label>
+          <input class="tech-input" id="tc-other" placeholder="e.g. Stripe, Redis, Cloudinary" />
+        </div>
+      </div>
+      <button class="btn-confirm-generate" id="confirm-gen-btn" onclick="confirmAndGenerate()">
+        ⚡ Looks good — Generate Full PRD
+      </button>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div id="progress-area">
+    <div class="progress-header">
+      <div class="spinner"></div>
+      <div class="progress-label" id="progress-label">Sending to Groq…</div>
+      <div class="progress-meta" id="progress-meta"></div>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-msg" id="error-msg"></div>
+
+  <!-- Output -->
+  <div id="output-area">
+    <div class="output-toolbar">
+      <div class="output-title">
+        <div class="dot"></div>
+        PRD Generated
+      </div>
+      <div class="btn-group">
+        <button class="btn-tool" onclick="copyMarkdown()">📋 Copy Markdown</button>
+        <button class="btn-tool" onclick="openPrintView()">🖨 Print / Save PDF</button>
+        <button class="btn-tool primary" onclick="downloadPDF()">⬇ Download PDF</button>
+      </div>
+    </div>
+    <div id="prd-preview"></div>
+  </div>
+</main>
+
+<footer>
+  Groq API · Free tier · Your key stays in your browser ·
+  <a href="https://console.groq.com" target="_blank">Get API Key</a> ·
+  <a href="https://vercel.com" target="_blank">Deploy on Vercel</a>
+</footer>
+
+<!-- marked.js for Markdown → HTML -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<!-- jsPDF + html2canvas for PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const MODEL        = 'llama-3.3-70b-versatile';
+const MAX_TOKENS   = 8192;
+
+// ═══════════════════════════════════════════════════════════
+//  GROQ FREE TIER LIMITS (official)
+//  llama-3.3-70b-versatile: 30 req/min · 14,400 req/day · 6,000 tokens/min
+// ═══════════════════════════════════════════════════════════
+const GROQ_LIMITS = {
+  // Per-request token budget
+  stage1MaxTokens:  700,   // expand idea → JSON brief
+  stage2MaxTokens:  8192,  // full PRD generation
+  // Stage 1 is ~400 input tokens, Stage 2 is ~2,500 input tokens
+  // Total per PRD ≈ 3,200 input + 8,892 output ≈ 12,092 tokens
+
+  // Tokens/min Groq allows: 6,000
+  // A full PRD uses ~12,000 tokens → must space requests 2+ min apart
+  minSecsBetweenPRDs: 130,  // 2 min 10 sec buffer between full generations
+
+  // Requests/min Groq allows: 30. We use 2 per PRD (Stage 1 + Stage 2).
+  // Cap to 3 PRDs/min absolute max = 6 API calls/min, well under 30.
+  maxReqPerMin: 3,          // client-side PRD generations per minute
+  maxReqPerHour: 20,        // conservative hourly cap (Groq allows 14,400/day)
+  maxReqPerDay: 100,        // daily cap — 100 PRDs/day uses ~1.2M tokens, well under daily limit
+
+  // Retry settings for 429 responses
+  maxRetries: 3,
+  baseRetryDelayMs: 15000,  // 15s base, doubles each retry (15 → 30 → 60)
+};
+
+const STORAGE_KEY_API      = 'prd_groq_key';
+const STORAGE_KEY_RATE     = 'prd_rate_log';       // timestamps of PRD completions
+const STORAGE_KEY_TOKENS   = 'prd_token_log';      // { ts, tokens } per request
+const STORAGE_KEY_LAST_PRD = 'prd_last_prd_ts';   // timestamp of last completed PRD
+
+const EXAMPLES = [
+  `A SaaS kanban board for freelancers with built-in invoicing. Freelancers aged 25-40 who manage 3-10 clients simultaneously. They create boards per client, drag tasks between columns (Backlog/In Progress/Done), assign due dates, and generate PDF invoices from completed tasks. Tech: React frontend, Node.js + Express backend, MongoDB, JWT auth, Stripe for payments, hosted on Vercel (frontend) + Render (backend) + MongoDB Atlas (DB) — all free tier.`,
+  `Blog website in Java fullstack`,
+  `AI chatbot in Python`,
+  `A doctor appointment booking platform for patients in India. Patients search for doctors by specialty and city, view available slots, book appointments, and get SMS/email reminders. Doctors manage their schedule through a dashboard. Admin panel for approving new doctors. Tech: Next.js + Node.js + MongoDB, Firebase Auth, Twilio SMS, SendGrid email, Vercel (frontend) + Render (backend).`,
+  `A multi-vendor e-commerce marketplace. Sellers list products and get their own storefront. Buyers purchase, write reviews, save wishlists, and track orders. Weekly Stripe Connect payouts to sellers. Tech: Vue.js, Laravel + MySQL, Stripe Connect, Redis for caching, Vercel + Render.`,
+  `An AI-powered resume builder web app. User inputs work experience and target job description, AI tailors the resume content and bullet points, multiple templates available, export to PDF or Word. Tech: React, Node.js + Express + MongoDB, Groq API for AI suggestions, Puppeteer for PDF generation, Vercel (frontend) + Render (backend).`,
+  `Data analytics dashboard`,
+  `Network vulnerability scanner`
+];
+
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+let rawMarkdown = '';
+let apiKey = localStorage.getItem(STORAGE_KEY_API) || '';
+
+// ═══════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('idea-input').addEventListener('input', e => {
+    document.getElementById('char-count').textContent = e.target.value.length;
+  });
+
+  if (apiKey) {
+    document.getElementById('api-key-input').value = apiKey;
+  }
+
+  updateKeySection();
+  refreshRateBadge();
+
+  // Refresh badge every 30s
+  setInterval(refreshRateBadge, 30000);
+});
+
+// ═══════════════════════════════════════════════════════════
+//  API KEY — inline section
+// ═══════════════════════════════════════════════════════════
+function saveApiKey() {
+  const val = document.getElementById('api-key-input').value.trim();
+  if (!val) { alert('Please paste your Groq API key.'); return; }
+  if (!val.startsWith('gsk_')) {
+    alert('Groq API keys start with "gsk_". Please double-check your key from console.groq.com');
+    return;
+  }
+  apiKey = val;
+  localStorage.setItem(STORAGE_KEY_API, val);
+  updateKeySection();
+  refreshRateBadge();
+  const btn = document.querySelector('#api-key-section .btn-save');
+  if (btn) { btn.textContent = '✓ Saved!'; setTimeout(() => { btn.textContent = 'Save & Start'; }, 1800); }
+}
+
+function updateKeySection() {
+  const section   = document.getElementById('api-key-section');
+  const fullGuide = document.getElementById('key-guide-full');
+  const savedBar  = document.getElementById('key-saved-bar');
+  const btnLabel  = document.getElementById('key-btn-label');
+
+  if (apiKey) {
+    section.classList.add('hidden');
+    if (fullGuide) fullGuide.style.display = 'none';
+    if (savedBar)  { savedBar.classList.remove('hidden'); savedBar.style.display = 'block'; }
+    if (btnLabel)  btnLabel.textContent = 'Key ✓';
+    const preview = document.getElementById('key-preview');
+    if (preview)   preview.textContent = apiKey.slice(0, 6) + '••••••••' + apiKey.slice(-4);
+  } else {
+    section.classList.remove('hidden');
+    if (fullGuide) fullGuide.style.display = 'block';
+    if (savedBar)  { savedBar.classList.add('hidden'); savedBar.style.display = 'none'; }
+    if (btnLabel)  btnLabel.textContent = 'Add Key';
+  }
+}
+
+function toggleKeySection() {
+  const section = document.getElementById('api-key-section');
+  if (section.classList.contains('hidden')) {
+    section.classList.remove('hidden');
+    if (apiKey) {
+      document.getElementById('key-guide-full').style.display = 'block';
+      document.getElementById('key-saved-bar').style.display  = 'block';
+      document.getElementById('api-key-input').value = apiKey;
+    }
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } else {
+    section.classList.add('hidden');
+  }
+}
+
+function showKeyEdit() {
+  document.getElementById('key-guide-full').style.display = 'block';
+  document.getElementById('api-key-input').value = apiKey;
+  document.getElementById('api-key-input').focus();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RATE LIMITING — Multi-layer client-side protection
+//
+//  Layer 1: Per-minute PRD cap (token/min budget)
+//  Layer 2: Per-hour PRD cap
+//  Layer 3: Per-day PRD cap
+//  Layer 4: Minimum cooldown between PRDs (token/min recovery)
+//  Layer 5: Token budget tracking (stay under 6,000 tokens/min)
+//  Layer 6: Exponential backoff retry on 429 from Groq
+// ═══════════════════════════════════════════════════════════
+
+function getRateLog() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_RATE) || '[]'); }
+  catch { return []; }
+}
+function saveRateLog(log) {
+  localStorage.setItem(STORAGE_KEY_RATE, JSON.stringify(log));
+}
+function getTokenLog() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_TOKENS) || '[]'); }
+  catch { return []; }
+}
+function saveTokenLog(log) {
+  localStorage.setItem(STORAGE_KEY_TOKENS, JSON.stringify(log));
+}
+
+function recordRequest(tokensUsed = 0) {
+  const now = Date.now();
+
+  // Record PRD completion timestamp
+  let rateLog = getRateLog().filter(ts => now - ts < 24 * 60 * 60 * 1000);
+  rateLog.push(now);
+  saveRateLog(rateLog);
+
+  // Record token usage
+  let tokenLog = getTokenLog().filter(e => now - e.ts < 60 * 1000); // keep last 60s
+  tokenLog.push({ ts: now, tokens: tokensUsed });
+  saveTokenLog(tokenLog);
+
+  // Record last PRD time for cooldown
+  localStorage.setItem(STORAGE_KEY_LAST_PRD, String(now));
+}
+
+function getTokensUsedLastMinute() {
+  const now = Date.now();
+  return getTokenLog()
+    .filter(e => now - e.ts < 60 * 1000)
+    .reduce((sum, e) => sum + e.tokens, 0);
+}
+
+function checkRateLimit() {
+  const now = Date.now();
+  const log = getRateLog().filter(ts => now - ts < 24 * 60 * 60 * 1000);
+
+  // Layer 1: Per-minute PRD cap
+  const lastMin = log.filter(ts => now - ts < 60 * 1000);
+  if (lastMin.length >= GROQ_LIMITS.maxReqPerMin) {
+    const oldest = Math.min(...lastMin);
+    const waitSec = Math.ceil((60000 - (now - oldest)) / 1000);
+    return { blocked: true, layer: 'minute', reason: `Slow down! Max ${GROQ_LIMITS.maxReqPerMin} PRDs per minute. Wait ${waitSec}s.`, waitSec };
+  }
+
+  // Layer 2: Per-hour PRD cap
+  const lastHour = log.filter(ts => now - ts < 60 * 60 * 1000);
+  if (lastHour.length >= GROQ_LIMITS.maxReqPerHour) {
+    const oldest = Math.min(...lastHour);
+    const waitMin = Math.ceil((3600000 - (now - oldest)) / 60000);
+    return { blocked: true, layer: 'hour', reason: `Hourly cap reached (${GROQ_LIMITS.maxReqPerHour} PRDs/hr). Resets in ~${waitMin} min.`, waitMin };
+  }
+
+  // Layer 3: Per-day PRD cap
+  if (log.length >= GROQ_LIMITS.maxReqPerDay) {
+    const oldest = Math.min(...log);
+    const waitHr = Math.ceil((86400000 - (now - oldest)) / 3600000);
+    return { blocked: true, layer: 'day', reason: `Daily cap reached (${GROQ_LIMITS.maxReqPerDay} PRDs/day). Resets in ~${waitHr} hr.`, waitHr };
+  }
+
+  // Layer 4: Minimum cooldown between PRDs (token/min recovery)
+  const lastPRD = parseInt(localStorage.getItem(STORAGE_KEY_LAST_PRD) || '0', 10);
+  const secsSinceLast = (now - lastPRD) / 1000;
+  if (lastPRD && secsSinceLast < GROQ_LIMITS.minSecsBetweenPRDs) {
+    const waitSec = Math.ceil(GROQ_LIMITS.minSecsBetweenPRDs - secsSinceLast);
+    return {
+      blocked: true, layer: 'cooldown',
+      reason: `Groq needs ${waitSec}s to recover token quota. A PRD uses ~12,000 tokens; Groq allows 6,000/min.`,
+      waitSec
+    };
+  }
+
+  // Layer 5: Token budget check — stay under 6,000 tokens/min
+  const tokensLastMin = getTokensUsedLastMinute();
+  const tokenHeadroom = 6000 - tokensLastMin;
+  // Stage 1 + Stage 2 combined needs ~3,200 input tokens minimum
+  if (tokenHeadroom < 3200) {
+    const waitSec = 60 - Math.floor((now - Math.min(...getTokenLog().map(e => e.ts))) / 1000);
+    return {
+      blocked: true, layer: 'tokens',
+      reason: `Token quota almost full (${tokensLastMin}/6,000 used this minute). Wait ~${Math.max(waitSec, 5)}s.`,
+      waitSec: Math.max(waitSec, 5)
+    };
+  }
+
+  const usedToday = log.length;
+  const usedHour  = lastHour.length;
+  return {
+    blocked: false,
+    usedToday, usedHour,
+    leftToday:  GROQ_LIMITS.maxReqPerDay  - usedToday,
+    leftHour:   GROQ_LIMITS.maxReqPerHour - usedHour,
+    tokensLastMin,
+    tokenHeadroom
+  };
+}
+
+function refreshRateBadge() {
+  const check = checkRateLimit();
+  const badge = document.getElementById('rate-badge');
+  const text  = document.getElementById('rate-badge-text');
+
+  if (!apiKey) {
+    badge.className = 'rate-badge';
+    text.textContent = 'No key';
+    return;
+  }
+  if (check.blocked) {
+    badge.className = 'rate-badge limit';
+    text.textContent = check.layer === 'cooldown' ? 'Cooling down' : 'Rate limited';
+  } else if (check.leftHour <= 3 || check.tokenHeadroom < 5000) {
+    badge.className = 'rate-badge warn';
+    text.textContent = `${check.usedHour}/${GROQ_LIMITS.maxReqPerHour} used`;
+  } else {
+    badge.className = 'rate-badge';
+    text.textContent = `${check.usedToday} PRDs today`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  EXAMPLES
+// ═══════════════════════════════════════════════════════════
+function fillExample(i) {
+  const ta = document.getElementById('idea-input');
+  ta.value = EXAMPLES[i];
+  document.getElementById('char-count').textContent = ta.value.length;
+  ta.focus();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STAGE 1 — EXPAND any idea (even a one-liner) into a full brief
+// ═══════════════════════════════════════════════════════════
+function buildExpandPrompt(rawIdea) {
+  return `A user gave you a project idea. It might be a single vague sentence, a typo-filled one-liner, or a detailed paragraph. Your job is to intelligently expand it into a complete, specific project brief that a developer can work from.
+
+USER INPUT: "${rawIdea}"
+
+Infer everything that's missing. If the user said "blog website in java fullstack", you should infer: Spring Boot backend, Thymeleaf or React frontend, MySQL or PostgreSQL, JWT auth, features like post creation/editing, categories, comments, user accounts, etc.
+
+HOSTING RULE — CRITICAL: Always recommend FREE hosting options. Never suggest paid services like DigitalOcean, AWS EC2, Heroku, or Linode as defaults. Use these free-tier options instead:
+- Frontend (React/Next.js/Vue): "Vercel (free tier)" or "Cloudflare Pages (free)"
+- Backend (Node.js): "Render (free tier)" or "Railway (starter plan)"
+- Backend (Python/Django/FastAPI): "Render (free tier)" or "Railway (starter plan)"  
+- Backend (Java/Spring Boot): "Render (free tier)" or "Railway (starter plan)"
+- Database: "Supabase (free PostgreSQL)" or "Railway PostgreSQL (free credits)" or "MongoDB Atlas (free 512MB)"
+- Full-stack combo: "Vercel (frontend) + Render (backend) + Supabase (DB)" — all free
+
+Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Just raw JSON:
+
+{
+  "projectName": "Inferred project name (2-4 words, title case)",
+  "appType": "e.g. Web App / SaaS Dashboard / Mobile App / API Service / E-commerce",
+  "oneLiner": "One crisp sentence describing what it does",
+  "targetUsers": "Who will use this (be specific — age range, role, context)",
+  "coreProblem": "What pain point does this solve?",
+  "frontend": "Specific frontend framework/tech (e.g. React 18, Next.js 14, Vue 3, Thymeleaf)",
+  "backend": "Specific backend (e.g. Spring Boot 3.2, Django 4.2, Node.js + Express, FastAPI)",
+  "database": "Specific DB (e.g. PostgreSQL 16, MySQL 8, MongoDB 7)",
+  "auth": "Auth method (e.g. JWT + Spring Security, JWT + Passport.js, Session-based, Firebase Auth)",
+  "hosting": "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)' or 'Vercel + Railway' or 'Cloudflare Pages + Render'",
+  "otherTools": "Other tools like Redis, Stripe, SendGrid, Cloudinary, etc. (or 'None')",
+  "coreFeatures": ["feature 1", "feature 2", "feature 3", "feature 4", "feature 5"],
+  "niceToHave": ["feature A", "feature B", "feature C"],
+  "outOfScope": ["thing 1", "thing 2"]
+}`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STAGE 2 — Build full PRD prompt from expanded brief
+// ═══════════════════════════════════════════════════════════
+function buildPRDPrompt(brief) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const hasRealtime = /websocket|socket\.io|real.?time|chat|live|notification/i.test(
+    (brief.otherTools || '') + brief.coreFeatures.join(' ') + brief.oneLiner
+  );
+  const hasTasks = /celery|queue|background|task|job|email|worker|cron|schedule/i.test(
+    (brief.otherTools || '') + brief.coreFeatures.join(' ')
+  );
+  const hasCache = /redis|cache|memcache/i.test(brief.otherTools || '');
+  const isJava   = /spring|java|jpa|hibernate/i.test(brief.backend);
+  const isPython = /django|fastapi|flask|python/i.test(brief.backend);
+
+  const extras = [
+    hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy. Redis group strategy. NO consumer or hook code.` : '',
+    hasTasks    ? `\n## Background Tasks\nTask table (Task Name | Trigger | Inputs | Action | Retry Policy). Cron schedule table (Task | Cron | Purpose). Config reference (broker URL, result backend, concurrency). NO task function bodies.` : '',
+    hasCache    ? `\n## Caching Strategy\nCache layer table (Layer | Tool | What Cached | TTL | Invalidation Trigger). Config reference (backend, timeout). Per-endpoint cache policy table.` : '',
+  ].filter(Boolean).join('\n');
+
+  return `PROJECT: ${brief.projectName} (${brief.appType})
+STACK: ${brief.backend} + ${brief.frontend} + ${brief.database} + ${brief.auth}
+HOSTING: ${brief.hosting} — free tier only
+TOOLS: ${brief.otherTools}
+USERS: ${brief.targetUsers}
+PROBLEM: ${brief.coreProblem}
+FEATURES: ${brief.coreFeatures.join(' | ')}
+NICE-TO-HAVE: ${brief.niceToHave.join(' | ')}
+OUT OF SCOPE: ${brief.outOfScope.join(' | ')}
+DATE: ${today}
+
+Write a professional PRD in Markdown. Specification prose + tables only. No code implementations. No function bodies.
+
+# ${brief.projectName} — Product Requirements Document
+*${today} | v1.0 | ${brief.backend} + ${brief.frontend}*
+
+## 1. Executive Summary
+4 paragraphs: what it is · why existing tools fail these users · who the users are · MVP scope + success definition.
+### Goals
+5 measurable product goals.
+### Non-Goals
+Out-of-scope items with one-line reason each.
+
+## 2. Tech Stack Overview
+### Backend
+| Layer | Technology | Version | Purpose | Why Chosen |
+(8+ rows: language, framework, ORM, REST layer, auth, DB, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''})
+### Frontend
+| Layer | Technology | Version | Purpose | Why Chosen |
+(8+ rows: language, framework, build tool, router, state, styling, forms, HTTP client, testing)
+### Infrastructure
+| Service | Technology | Purpose |
+(containerization, CI/CD, backend host, frontend host, proxy, monitoring)
+
+## 3. System Architecture
+Architecture pattern + 2-sentence rationale.
+\`\`\`
+ASCII component diagram: Browser → Proxy → API → DB${hasCache ? ' ↔ Cache' : ''}${hasTasks ? ' + Workers' : ''}${hasRealtime ? ' + WS' : ''}
+\`\`\`
+### Request Flow — REST API
+Numbered steps 1–8: user action → DB → response rendered.
+${hasRealtime ? '### Request Flow — WebSocket\nNumbered steps 1–5: connect → message → broadcast.' : ''}
+### Key Design Decisions
+| Decision | Choice | Rationale | Trade-off |
+(3–5 rows: JWT vs sessions, SQL vs NoSQL, monolith vs services, etc.)
+
+## 4. Backend Architecture
+### Project Structure
+\`\`\`
+backend/ file tree — every folder/file with ← role comment
+\`\`\`
+### Framework Concepts Reference
+| Concept | Definition | Role in ${brief.projectName} | Key File |
+(10+ rows: Models, Views/Controllers, Serializers/DTOs, Middleware, Signals/Hooks, Admin, Router, etc.)
+### Data Modeling Approach
+Entity design philosophy: naming conventions, relationship strategy (FK/M2M/embedded), soft-delete pattern.
+
+## 5. Frontend Architecture
+### Project Structure
+\`\`\`
+src/ file tree — every folder with ← responsibility comment
+\`\`\`
+### Route Table
+| Path | Component | Access Level | Guard Behavior |
+(all routes: public, authenticated, admin)
+### State Architecture
+| State | Location | Library | Why Here |
+(auth tokens, user profile, server cache, form state, URL filters)
+
+## 6. Database Schema
+\`\`\`sql
+Full CREATE TABLE DDL for every entity: exact types (BIGSERIAL, VARCHAR(255), TEXT, TIMESTAMP WITH TIME ZONE, BOOLEAN), NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
+\`\`\`
+### Query Patterns
+One sentence per major access pattern: what's fetched, join strategy, why (e.g. select_related vs prefetch_related to avoid N+1).
+### Data Integrity Rules
+Business rules enforced at DB layer: unique constraints, check constraints, cascade behavior.
+
+## 7. API Specification
+Base URL: /api/v1/ | Auth: Bearer token | Pagination: page-number, default 20
+### Endpoints
+| Method | Endpoint | Auth | Request Fields | Response Shape | Description |
+(ALL endpoints, 14+ rows, grouped: Auth → Users → ${brief.coreFeatures[0] || 'Resources'} → …)
+### Response Contracts
+\`\`\`json
+List: { "count": 142, "next": "/api/v1/items/?page=2", "results": [{...}] }
+Detail: { "id": 1, "field": "value", "created_at": "2026-01-15T10:30:00Z" }
+400: { "field_name": ["Error message."] }
+401: { "detail": "Authentication credentials were not provided." }
+404: { "detail": "Not found." }
+\`\`\`
+### Business Rules Per Endpoint
+For each non-trivial endpoint: validation rules, permission checks, side effects (emails, notifications, cache busts).
+
+## 8. Authentication & Authorization
+### Auth Lifecycle
+Numbered steps: register → verify email → login → token issued → request with token → token expires → refresh → logout → revoke.
+### Token Strategy
+| Property | Value | Rationale |
+| Access token lifetime | 15 min | Limits exposure window |
+| Refresh token lifetime | 7 days | Balance UX vs security |
+| Access token storage | In-memory (Redux) | XSS-safe; never persisted |
+| Refresh token storage | httpOnly cookie | JS-inaccessible; SameSite=Strict |
+| Algorithm | HS256 | Single-service sufficient |
+| Rotation | On every refresh | Single-use; old token blacklisted |
+### JWT Config Reference
+\`\`\`
+ACCESS_TOKEN_LIFETIME = 15m | REFRESH_TOKEN_LIFETIME = 7d | ROTATE = true | ALGORITHM = HS256
+\`\`\`
+### Permission Model
+| Level | Who | Allowed Actions |
+(Anonymous, Authenticated, Owner, Staff/Admin — 4 rows)
+Object-level permission check flow described in prose (no code).
+
+## 9. State Management
+### Global Store Shape
+\`\`\`json
+{ "auth": { "user": null, "accessToken": null, "isAuthenticated": false }, "ui": { "theme": "dark", "toasts": [] } }
+\`\`\`
+### Server Cache Policy
+| Resource | Cache Key | TTL | Invalidated By |
+(one row per main API resource)
+### State Location Map
+| State | Location | Library | Reason |
+(auth, profile, server data, forms, URL params — 5+ rows)
+
+## 10. Error Handling
+### Error Envelope
+\`\`\`json
+{ "detail": "message", "code": "ERROR_CODE", "status_code": 400, "fields": {} }
+\`\`\`
+### Error Propagation Strategy
+Where exceptions are caught, what is logged vs returned, how PII is stripped from error responses in production.
+### HTTP Status Reference
+| Code | When | Response Shape | Frontend Action |
+(200, 201, 204, 400, 401, 403, 404, 409, 429, 500, 503)
+### Logging Levels
+| Level | What | Where | Retention |
+(DEBUG dev-only, INFO request lifecycle, WARNING rate limits, ERROR unhandled, CRITICAL security events)
+### Frontend Error Layers
+Global ErrorBoundary → API interceptor (401 refresh, 500 toast) → field-level form errors from 400 responses.
+
+## 11. Testing Strategy
+### Philosophy
+Test pyramid shape for this project, coverage targets, what is intentionally NOT tested.
+### Backend Test Plan
+| ID | Scenario | Type | Input | Expected | Tool |
+(10+ rows: CRUD happy paths, auth edge cases, validation failures, permission checks, 404s)
+### Frontend Test Plan
+| ID | Component/Flow | Type | Scenario | Expected | Tool |
+(6+ rows: render, protected routes, form validation, API success/error)
+### Test Environment
+Separate DB setup, mocked external services, seed data strategy.
+
+## 12. Security Checklist
+| Threat | Mitigation | Implementation Detail | Priority |
+| SQL Injection | ORM parameterized queries | All DB access via ${brief.backend} ORM; raw SQL banned | P0 |
+| XSS | Output escaping + CSP header | Framework escapes by default; CSP blocks inline scripts | P0 |
+| CSRF | SameSite=Strict cookie | Refresh cookie: SameSite=Strict; CSRF middleware enabled | P0 |
+| JWT Theft | Short-lived in-memory tokens | 15-min access token in Redux only; never localStorage | P0 |
+| Brute Force | Rate limiting on auth | 5 failures/min/IP → 429; exponential lockout | P0 |
+| CORS | Origin whitelist | ALLOWED_ORIGINS = [production frontend URL only] | P0 |
+| Secrets | Env vars only | No credentials in code; .env in .gitignore | P0 |
+| Insecure Uploads | MIME + size check | Validate Content-Type; reject > 10MB server-side | P1 |
+| HTTPS/HSTS | TLS + strict headers | HTTP→HTTPS redirect; HSTS max-age=31536000 | P0 |
+| PII Over-fetch | Explicit serializer fields | No wildcard field inclusion in production serializers | P1 |
+
+## 13. Deployment Guide
+### Development (Docker Compose)
+\`\`\`yaml
+[docker-compose.yml: db (postgres:16), ${hasCache ? 'redis (redis:7-alpine), ' : ''}backend (port 8000), frontend (port 5173)${hasTasks ? ', worker, beat' : ''}. Env vars, volumes, depends_on, healthchecks.]
+\`\`\`
+### Production Architecture
+\`\`\`
+Internet → Cloudflare → ${brief.hosting.split('+')[0]?.trim() || 'Vercel'} (frontend static)
+                      → ${brief.hosting.includes('Render') ? 'Render' : 'Railway'} (API server)
+                      → Supabase / MongoDB Atlas (managed DB, free tier)
+\`\`\`
+### CI/CD (GitHub Actions)
+\`\`\`yaml
+[.github/workflows/deploy.yml: on PR → lint + test; on main → build + deploy + migrate + health check + notify]
+\`\`\`
+### Deployment Steps
+\`\`\`bash
+[Every command: git clone → env setup → DB provision → deploy backend → deploy frontend → verify live URL on ${brief.hosting}]
+\`\`\`
+### Rollback
+Migration rollback command, previous image tag revert, feature flag kill-switch.
+
+## 14. Performance Requirements
+| Metric | Target | How Measured |
+| API p95 latency | < 200ms | APM / UptimeRobot |
+| Page LCP | < 2.5s | Lighthouse CI |
+| Time to Interactive | < 4.0s | Lighthouse CI |
+| DB query p95 | < 50ms | Slow query log |
+| Concurrent users | 500 (v1) | k6 load test |${hasRealtime ? '\n| WebSocket latency | < 100ms | Ping/pong probe |' : ''}
+### Optimization Techniques
+| Area | Technique | Gain |
+(DB indexes, ${hasCache ? 'Redis cache TTLs, ' : ''}N+1 prevention, code splitting, CDN, connection pooling)
+
+## 15. Environment Variables
+| Variable | Example Value | Description | Required | Service |
+(12+ rows: SECRET_KEY, DATABASE_URL, ${hasCache ? 'REDIS_URL, ' : ''}JWT_SECRET, EMAIL credentials, STORAGE credentials, VITE_API_URL, SENTRY_DSN${hasRealtime ? ', WS_URL' : ''})
+
+## 16. Project Folder Structure
+\`\`\`
+project-root/
+├── backend/     ← ${brief.backend} app
+├── frontend/    ← ${brief.frontend} app
+├── nginx/       ← reverse proxy config
+├── .github/workflows/  ← CI/CD pipelines
+├── docker-compose.yml
+└── .env.example
+[Expand every subdirectory with ├── └── notation and ← comments on every file]
+\`\`\`
+
+## 17. Build Order / Developer Checklist
+### Phase 1 — Setup
+- [ ] [specific init command + repo structure]
+### Phase 2 — Database & Models
+- [ ] [specific model, file name, fields]
+### Phase 3 — Auth
+- [ ] [specific auth component, file, what it does]
+### Phase 4 — Core API
+- [ ] [one task per feature endpoint group]
+### Phase 5 — Frontend Foundation
+- [ ] [specific component or config file]
+### Phase 6 — Feature UI
+- [ ] [one task per feature, file name]
+### Phase 7 — Integration & Tests
+- [ ] [specific test file, scenarios]
+### Phase 8 — Deploy
+- [ ] [specific platform step on ${brief.hosting}]
+${extras}
+
+## Glossary
+| Term | Definition |
+|------|-----------|
+(20+ rows: every framework, library, pattern, infra term, acronym in this document — 1–2 sentence plain-English definitions)
+
+*End of PRD — ${brief.projectName} v1.0*`;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  GROQ CALL — reusable
+// ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+//  GROQ CALL — with exponential backoff retry on 429
+// ═══════════════════════════════════════════════════════════
+async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3 }, retryCount = 0) {
+  const response = await fetch(GROQ_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: maxTokens,
+      temperature,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt   }
+      ]
+    })
+  });
+
+  // ── 429: Groq rate limit hit → exponential backoff retry ──
+  if (response.status === 429) {
+    if (retryCount >= GROQ_LIMITS.maxRetries) {
+      throw new Error(`Groq rate limit hit after ${GROQ_LIMITS.maxRetries} retries. Please wait 2 minutes and try again.`);
+    }
+    // Try to read Retry-After header from Groq, else use exponential backoff
+    const retryAfter = response.headers.get('retry-after');
+    const waitMs = retryAfter
+      ? parseInt(retryAfter, 10) * 1000
+      : GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount); // 15s → 30s → 60s
+
+    const waitSec = Math.ceil(waitMs / 1000);
+    setProgress(
+      null,
+      `⏳ Groq rate limit hit — auto-retrying in ${waitSec}s (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})…`,
+      ''
+    );
+    await new Promise(r => setTimeout(r, waitMs));
+    return callGroq({ systemPrompt, userPrompt, maxTokens, temperature }, retryCount + 1);
+  }
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const msg = err.error?.message || '';
+    if (response.status === 401) throw new Error('Invalid Groq API key. Click "Key ✓" in the header to update it.');
+    if (response.status === 413) throw new Error('Prompt too long. Please shorten your project description.');
+    if (response.status === 503) throw new Error('Groq is temporarily unavailable. Please try again in a minute.');
+    throw new Error(`Groq API error ${response.status}: ${msg || 'Unknown error.'}`);
+  }
+
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || '';
+  return { text, usage: data.usage };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RENDER EXPANDED BRIEF CARD
+// ═══════════════════════════════════════════════════════════
+function renderBriefCard(brief) {
+  const card = document.getElementById('brief-card');
+  const body = document.getElementById('brief-body');
+
+  const tags = (arr) => arr.map(f =>
+    `<span class="brief-tag">${f}</span>`
+  ).join('');
+
+  body.innerHTML = `
+    <div style="padding:18px 22px 0;">
+      <div class="brief-row">
+        <span class="brief-label">Project Name</span>
+        <span class="brief-value"><strong>${brief.projectName}</strong> &nbsp;·&nbsp; ${brief.appType}</span>
+      </div>
+      <div class="brief-row">
+        <span class="brief-label">What it does</span>
+        <span class="brief-value">${brief.oneLiner}</span>
+      </div>
+      <div class="brief-row">
+        <span class="brief-label">Target Users</span>
+        <span class="brief-value">${brief.targetUsers}</span>
+      </div>
+      <div class="brief-row">
+        <span class="brief-label">Core Features</span>
+        <span class="brief-value">${tags(brief.coreFeatures)}</span>
+      </div>
+    </div>
+  `;
+
+  // Populate editable tech stack inputs
+  document.getElementById('tc-frontend').value = brief.frontend || '';
+  document.getElementById('tc-backend').value  = brief.backend  || '';
+  document.getElementById('tc-database').value = brief.database || '';
+  document.getElementById('tc-auth').value     = brief.auth     || '';
+  document.getElementById('tc-hosting').value  = brief.hosting  || '';
+  document.getElementById('tc-other').value    = (brief.otherTools && brief.otherTools !== 'None') ? brief.otherTools : '';
+
+  card.style.display = 'block';
+
+  // Scroll into view smoothly
+  setTimeout(() => {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 100);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GENERATE — Stage 1 only (expand idea → show brief + tech confirm)
+// ═══════════════════════════════════════════════════════════
+let _currentBrief = null; // holds brief between stages
+
+async function generatePRD() {
+  const idea = document.getElementById('idea-input').value.trim();
+
+  if (!idea || idea.length < 3) {
+    showError('Give me at least a few characters — even a short idea like "blog in java" works!');
+    return;
+  }
+
+  if (!apiKey) {
+    showError('Please add your Groq API key first — see the guide below.');
+    const section = document.getElementById('api-key-section');
+    section.classList.remove('hidden');
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  const rateCheck = checkRateLimit();
+  if (rateCheck.blocked) {
+    showError('⏳ ' + rateCheck.reason);
+    updateRateWarning(rateCheck.reason);
+    return;
+  }
+
+  // ── Reset UI ──
+  _currentBrief = null;
+  document.getElementById('gen-btn').disabled = true;
+  document.getElementById('confirm-gen-btn').disabled = true;
+  document.getElementById('output-area').style.display = 'none';
+  document.getElementById('error-msg').style.display = 'none';
+  document.getElementById('rate-warning').style.display = 'none';
+  document.getElementById('brief-card').style.display = 'none';
+  document.getElementById('progress-area').style.display = 'none';
+  rawMarkdown = '';
+
+  const startTime = Date.now();
+
+  try {
+    // ── STAGE 1: Expand raw idea → brief JSON ──
+    setProgress(5, 'Understanding your idea…', '');
+
+    const stage1 = await callGroq({
+      systemPrompt: 'You are an expert software product analyst. Your job is to intelligently expand any vague project idea — even a single word or typo-filled phrase — into a complete, specific project brief. Always respond with valid raw JSON only. No markdown fences, no explanation.',
+      userPrompt: buildExpandPrompt(idea),
+      maxTokens: 700,
+      temperature: 0.25
+    });
+
+    document.getElementById('progress-area').style.display = 'none';
+
+    let brief;
+    try {
+      const cleaned = stage1.text.replace(/```json|```/gi, '').trim();
+      brief = JSON.parse(cleaned);
+    } catch (e) {
+      console.warn('Stage 1 JSON parse failed, using fallback:', e);
+      brief = buildFallbackBrief(idea);
+    }
+
+    _currentBrief = brief;
+
+    // Show brief + tech confirm panel — user decides when to proceed
+    renderBriefCard(brief);
+
+  } catch (err) {
+    document.getElementById('progress-area').style.display = 'none';
+    showError('⚠️ ' + err.message);
+    console.error('Error:', err);
+  } finally {
+    document.getElementById('gen-btn').disabled = false;
+    document.getElementById('confirm-gen-btn').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CONFIRM & GENERATE — Stage 2 (user confirmed stack → full PRD)
+// ═══════════════════════════════════════════════════════════
+async function confirmAndGenerate() {
+  if (!_currentBrief) return;
+
+  // Merge any user edits back into the brief
+  const brief = {
+    ..._currentBrief,
+    frontend:   document.getElementById('tc-frontend').value.trim() || _currentBrief.frontend,
+    backend:    document.getElementById('tc-backend').value.trim()  || _currentBrief.backend,
+    database:   document.getElementById('tc-database').value.trim() || _currentBrief.database,
+    auth:       document.getElementById('tc-auth').value.trim()     || _currentBrief.auth,
+    hosting:    document.getElementById('tc-hosting').value.trim()  || _currentBrief.hosting,
+    otherTools: document.getElementById('tc-other').value.trim()    || _currentBrief.otherTools,
+  };
+
+  document.getElementById('confirm-gen-btn').disabled = true;
+  document.getElementById('gen-btn').disabled = true;
+  document.getElementById('output-area').style.display = 'none';
+  document.getElementById('error-msg').style.display = 'none';
+  rawMarkdown = '';
+
+  const startTime = Date.now();
+
+  try {
+    document.getElementById('progress-area').style.display = 'block';
+    document.getElementById('progress-bar').style.width = '8%';
+    document.getElementById('progress-label').textContent = 'Stack confirmed — drafting PRD…';
+
+    const prdSteps = [
+      [16,  'Designing system architecture…'],
+      [30,  'Writing database schema…'],
+      [45,  'Defining API endpoints…'],
+      [58,  'Building feature breakdown…'],
+      [70,  'Writing auth & security sections…'],
+      [82,  'Writing deployment guide…'],
+      [93,  'Finalizing all 16 sections…'],
+    ];
+
+    let stepIdx = 0;
+    const progressInterval = setInterval(() => {
+      if (stepIdx < prdSteps.length) {
+        const [pct, label] = prdSteps[stepIdx];
+        document.getElementById('progress-bar').style.width = pct + '%';
+        document.getElementById('progress-label').textContent = label;
+        document.getElementById('progress-meta').textContent = `${((Date.now()-startTime)/1000).toFixed(1)}s`;
+        stepIdx++;
+      }
+    }, 2200);
+
+    const stage2 = await callGroq({
+      systemPrompt: `You are a Staff Engineer at a top-tier tech company writing a Product Requirements Document. Your PRDs are read by engineering leads, architects, and developers — they are professional specification documents, NOT code tutorials or code dumps.
+
+WRITING STYLE — THIS IS NON-NEGOTIABLE:
+You write like Stripe, Google, and Airbnb write internal specs. Clear, precise, professional prose and structured tables. You describe WHAT the system does and HOW it behaves — not HOW to implement every line of code.
+
+WHAT BELONGS IN A PRD (write this):
+- Architecture decisions with rationale ("We use JWT over sessions because the API must be stateless for horizontal scaling")
+- Data model specifications: table names, column names, types, constraints, relationships, indexes
+- API contract: endpoint table, request/response shape in JSON (schema only, not implementation)
+- Behavior descriptions: "When a user submits an invalid email, the API returns 400 with field-level errors"
+- Configuration values: JWT lifetimes, rate limits, token sizes — as a config reference, not code
+- Security requirements: what must be enforced and why, with the specific mechanism named
+- Performance targets: p95 latency, throughput, caching TTLs
+- Build checklist: what to build, in what order, with file names — not how to write each function
+- Setup commands: git clone, npm install, docker-compose up — these are fine
+- Deployment steps: platform-specific commands to go live — these are fine
+- Environment variables table: name, example value, description
+
+WHAT DOES NOT BELONG IN A PRD (never write this):
+- Full function bodies (no @shared_task def send_welcome_email(): user = User.objects.get(...))
+- Complete class implementations (no class ChatConsumer(AsyncWebsocketConsumer): async def connect...)
+- Full React hook implementations (no export const useWebSocket = (roomId) => { const [messages...})
+- Full test functions with assert statements
+- Complete ORM query implementations inside the document
+- Any code block longer than 15 lines
+
+CORRECT DEPTH EXAMPLE — Error Handling section:
+✅ CORRECT: "The global exception handler catches all unhandled exceptions and returns a standardized JSON envelope: { "error": true, "code": "VALIDATION_ERROR", "message": "...", "fields": {} }. Django uses a custom DRF exception handler registered in REST_FRAMEWORK['EXCEPTION_HANDLER']. Frontend displays field-level errors from the 'fields' key inline on form inputs; non-field errors appear as a toast notification."
+❌ WRONG: Pasting the full def custom_exception_handler(exc, context): function body.
+
+CORRECT DEPTH EXAMPLE — Real-Time Features section:
+✅ CORRECT: "Chat messages are delivered via WebSocket using Django Channels 4.x. Each chat room maps to a Redis channel group named chat_{room_id}. On connect, the consumer authenticates the user via the JWT in the query string and joins the group. On message, it broadcasts to all group members. The React client uses a custom useWebSocket hook that opens a WSS connection on mount and appends incoming messages to local state."
+❌ WRONG: Pasting the full class ChatConsumer or the full useWebSocket hook.
+
+CORRECT DEPTH EXAMPLE — Testing section:
+✅ CORRECT: A table of test scenarios with: Test Name | Type | Input | Expected Outcome | Tool. Example row: "POST /auth/login with invalid password | API test | { email: valid, password: wrong } | 401 { detail: 'Invalid credentials' } | pytest + DRF APIClient"
+❌ WRONG: Writing def test_login_invalid(): response = self.client.post(...) assert response.status_code == 401
+
+CODE IS ALLOWED ONLY FOR:
+1. SQL DDL (CREATE TABLE, CREATE INDEX) — because schema IS the spec
+2. JSON request/response shapes — because these are the API contract
+3. Config values (JWT settings, CORS origins, rate limit values) — as reference tables or inline values
+4. Setup and deployment shell commands — because these are procedural steps, not implementation
+5. File/folder tree — because structure IS the spec
+6. Environment variables table
+
+OUTPUT RULES:
+- Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
+- Every table must have real populated rows — no [example here].
+- Zero placeholders in tables, config values, or deployment commands.
+- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.`,
+      userPrompt: buildPRDPrompt(brief),
+      maxTokens: MAX_TOKENS,
+      temperature: 0.35
+    });
+
+    clearInterval(progressInterval);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    rawMarkdown = stage2.text;
+    if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
+
+    const totalTokens = stage2.usage?.total_tokens || 0;
+    recordRequest(totalTokens);
+    refreshRateBadge();
+
+    setProgress(100, `✓ PRD complete in ${elapsed}s`, `${totalTokens.toLocaleString()} tokens`);
+
+    // Show cooldown warning — user needs to wait before next PRD
+    const secsCooldown = GROQ_LIMITS.minSecsBetweenPRDs;
+    updateRateWarning(`⏳ Next PRD available in ~${Math.ceil(secsCooldown / 60)} min (token quota recovery). Used ${totalTokens.toLocaleString()} tokens.`);
+
+    setTimeout(() => {
+      document.getElementById('progress-area').style.display = 'none';
+      document.getElementById('brief-card').style.display = 'none';
+      renderPRD(rawMarkdown);
+    }, 700);
+
+  } catch (err) {
+    document.getElementById('progress-area').style.display = 'none';
+    showError('⚠️ ' + err.message);
+    console.error('Error:', err);
+  } finally {
+    document.getElementById('confirm-gen-btn').disabled = false;
+    document.getElementById('gen-btn').disabled = false;
+  }
+}
+
+// ── Helpers ──
+function setProgress(pct, label, meta) {
+  document.getElementById('progress-area').style.display = 'block';
+  if (pct !== null) document.getElementById('progress-bar').style.width = pct + '%';
+  if (label) document.getElementById('progress-label').textContent = label;
+  if (meta  !== undefined) document.getElementById('progress-meta').textContent = meta;
+}
+
+function buildFallbackBrief(idea) {
+  return {
+    projectName: idea.length > 30 ? 'My Project' : idea.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
+    appType: 'Web App',
+    oneLiner: `A web application for: ${idea}`,
+    targetUsers: 'General users who need this type of application',
+    coreProblem: `Users currently lack a good solution for: ${idea}`,
+    frontend: 'React 18 + Vite',
+    backend: 'Node.js + Express',
+    database: 'PostgreSQL 16',
+    auth: 'JWT (JSON Web Tokens)',
+    hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier',
+    otherTools: 'None',
+    coreFeatures: ['User registration and login', 'Core CRUD operations', 'Dashboard / main interface', 'Data persistence', 'Responsive design'],
+    niceToHave: ['Email notifications', 'Search and filtering', 'Export functionality'],
+    outOfScope: ['Native mobile app', 'Multi-language support', 'Offline mode']
+  };
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+function updateRateWarning(msg) {
+  const el = document.getElementById('rate-warning');
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RENDER PRD
+// ═══════════════════════════════════════════════════════════
+function renderPRD(md) {
+  marked.setOptions({ breaks: true, gfm: true });
+
+  const html = marked.parse(md);
+  const preview = document.getElementById('prd-preview');
+  preview.innerHTML = html;
+
+  // Add numbered section badges to h2 headings
+  preview.querySelectorAll('h2').forEach(h2 => {
+    const text = h2.textContent;
+    const match = text.match(/^(\d+)\.\s+/);
+    if (match) {
+      const num = match[1].padStart(2, '0');
+      const rest = text.replace(/^\d+\.\s+/, '');
+      h2.innerHTML = `<span class="sn">${num}</span> ${rest}`;
+    }
+  });
+
+  document.getElementById('output-area').style.display = 'block';
+
+  setTimeout(() => {
+    document.getElementById('output-area').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  COPY MARKDOWN
+// ═══════════════════════════════════════════════════════════
+function copyMarkdown() {
+  if (!rawMarkdown) return;
+  navigator.clipboard.writeText(rawMarkdown).then(() => {
+    const btn = document.querySelectorAll('.btn-tool')[0];
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ Copied!';
+    setTimeout(() => btn.innerHTML = orig, 2000);
+  }).catch(() => {
+    alert('Copy failed. Please select all text in the preview and copy manually.');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PRINT VIEW (fallback)
+// ═══════════════════════════════════════════════════════════
+function openPrintView() {
+  if (!rawMarkdown) return;
+  const win = window.open('', '_blank');
+  win.document.write(buildPDFHTML(rawMarkdown));
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch(e){} }, 900);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DOWNLOAD PDF
+// ═══════════════════════════════════════════════════════════
+async function downloadPDF() {
+  if (!rawMarkdown) return;
+
+  const btn = document.querySelectorAll('.btn-tool')[2];
+  const orig = btn.innerHTML;
+  btn.innerHTML = '⏳ Generating…';
+  btn.disabled = true;
+
+  try {
+    const { jsPDF } = window.jspdf;
+
+    // Build clean print-ready HTML in a hidden iframe
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;top:-99999px;left:-99999px;width:960px;height:1px;border:none;visibility:hidden;';
+    document.body.appendChild(iframe);
+
+    const iDoc = iframe.contentDocument || iframe.contentWindow.document;
+    iDoc.open();
+    iDoc.write(buildPDFHTML(rawMarkdown));
+    iDoc.close();
+
+    // Wait for fonts to load
+    await new Promise(r => setTimeout(r, 1400));
+
+    const canvas = await html2canvas(iDoc.body, {
+      scale: 1.6,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      width: 960,
+      windowWidth: 960,
+      logging: false,
+    });
+
+    document.body.removeChild(iframe);
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pdfW = pdf.internal.pageSize.getWidth();
+    const pdfH = pdf.internal.pageSize.getHeight();
+    const imgW = pdfW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    const imgData = canvas.toDataURL('image/jpeg', 0.93);
+
+    let posY = 0;
+    while (posY < imgH) {
+      if (posY > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, -posY, imgW, imgH, '', 'FAST');
+      posY += pdfH;
+    }
+
+    const titleMatch = rawMarkdown.match(/^#\s+([^\n—\-–|]+)/m);
+    const name = titleMatch
+      ? titleMatch[1].trim().replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '-')
+      : 'PRD';
+
+    pdf.save(`${name}-PRD.pdf`);
+
+  } catch (err) {
+    console.error('PDF generation error:', err);
+    // Graceful fallback to print dialog
+    openPrintView();
+  } finally {
+    btn.innerHTML = orig;
+    btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PDF HTML TEMPLATE (clean white Google-Docs style)
+// ═══════════════════════════════════════════════════════════
+function buildPDFHTML(md) {
+  marked.setOptions({ breaks: true, gfm: true });
+  const body = marked.parse(md);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: #1a1b2e;
+    background: #ffffff;
+    padding: 52px 64px;
+    max-width: 960px;
+  }
+
+  h1 {
+    font-size: 24pt;
+    font-weight: 800;
+    color: #0d0e1a;
+    letter-spacing: -0.035em;
+    margin-bottom: 4px;
+    line-height: 1.2;
+  }
+
+  em {
+    color: #888;
+    font-style: normal;
+    font-size: 9pt;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  hr {
+    border: none;
+    border-top: 1.5px solid #e5e7eb;
+    margin: 20px 0;
+  }
+
+  h2 {
+    font-size: 12.5pt;
+    font-weight: 700;
+    color: #3730a3;
+    margin: 30px 0 12px;
+    padding: 9px 14px;
+    background: #eef2ff;
+    border-left: 4px solid #6366f1;
+    border-radius: 0 6px 6px 0;
+  }
+
+  h3 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #1a1b2e;
+    margin: 18px 0 7px;
+  }
+
+  h4 {
+    font-size: 10pt;
+    font-weight: 600;
+    color: #374151;
+    margin: 13px 0 5px;
+  }
+
+  p {
+    color: #374151;
+    margin-bottom: 9px;
+  }
+
+  ul, ol {
+    padding-left: 20px;
+    color: #374151;
+    margin-bottom: 10px;
+  }
+
+  li { margin-bottom: 4px; }
+
+  strong { color: #111827; }
+
+  a { color: #6366f1; }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    background: #f3f4f6;
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: #6366f1;
+    border: 1px solid #e5e7eb;
+  }
+
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    border-radius: 8px;
+    padding: 14px 17px;
+    margin: 10px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    line-height: 1.6;
+    overflow-x: auto;
+    border: 1px solid #313244;
+    page-break-inside: avoid;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+
+  th {
+    background: #eef2ff;
+    color: #3730a3;
+    font-weight: 700;
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid #c7d2fe;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  td {
+    padding: 7px 12px;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+    vertical-align: top;
+  }
+
+  tr:nth-child(even) td { background: #f9fafb; }
+
+  blockquote {
+    border-left: 3px solid #6366f1;
+    padding-left: 14px;
+    color: #6b7280;
+    margin: 10px 0;
+    font-style: italic;
+  }
+
+  input[type="checkbox"] {
+    margin-right: 7px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>${body}</body>
+</html>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUT
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    generatePRD();
+  }
+  if (e.key === 'Escape') {
+    document.getElementById('api-key-section').classList.add('hidden');
+  }
+});
+</script>
+</body>
+</html>

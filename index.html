@@ -763,6 +763,53 @@ textarea::placeholder { color: var(--text-muted); }
   flex-shrink: 0;
 }
 
+/* ─────────── DOMAIN SELECTOR ─────────── */
+.domain-select { margin-bottom: 16px; }
+.domain-select-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.domain-pills {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.domain-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  font-family: var(--sans);
+  color: var(--text);
+}
+.domain-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
+.domain-pill.active {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(245,80,54,0.12), rgba(255,123,94,0.05));
+  box-shadow: 0 0 0 3px rgba(245,80,54,0.10);
+}
+.domain-pill-icon { font-size: 20px; flex-shrink: 0; }
+.domain-pill-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.domain-pill-text strong { font-size: 0.84rem; font-weight: 700; }
+.domain-pill-text small { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; }
+
+@media (max-width: 860px) {
+  .domain-pills { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 480px) {
+  .domain-pills { grid-template-columns: 1fr; }
+}
+
 /* ─────────── TECH CONFIRM PANEL ─────────── */
 .tech-grid {
   display: grid;
@@ -1339,6 +1386,29 @@ footer a:hover { color: var(--accent2); }
     </div>
   </div>
 
+  <!-- Domain selector -->
+  <div class="domain-select">
+    <div class="domain-select-label">What are you building?</div>
+    <div class="domain-pills">
+      <button type="button" class="domain-pill active" data-domain="web" onclick="selectDomain('web')">
+        <span class="domain-pill-icon">🌐</span>
+        <span class="domain-pill-text"><strong>Fullstack / Web App</strong><small>SaaS · dashboards · APIs · CRUD</small></span>
+      </button>
+      <button type="button" class="domain-pill" data-domain="ml" onclick="selectDomain('ml')">
+        <span class="domain-pill-icon">🤖</span>
+        <span class="domain-pill-text"><strong>AI / ML</strong><small>training · LLM apps · CV · MLOps</small></span>
+      </button>
+      <button type="button" class="domain-pill" data-domain="data" onclick="selectDomain('data')">
+        <span class="domain-pill-icon">📊</span>
+        <span class="domain-pill-text"><strong>Data Science &amp; Analytics</strong><small>pipelines · warehouse · BI</small></span>
+      </button>
+      <button type="button" class="domain-pill" data-domain="security" onclick="selectDomain('security')">
+        <span class="domain-pill-icon">🔐</span>
+        <span class="domain-pill-text"><strong>Cybersecurity</strong><small>threat model · pentest · compliance</small></span>
+      </button>
+    </div>
+  </div>
+
   <!-- Input -->
   <div class="input-card">
     <label class="input-label" for="idea-input">Describe Your Project Idea</label>
@@ -1390,36 +1460,8 @@ footer a:hover { color: var(--accent2); }
       <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);margin-bottom:14px;">
         🛠 Confirm or change your tech stack
       </div>
-      <div class="tech-grid">
-        <div class="tech-field">
-          <label class="tech-label">Frontend</label>
-          <input class="tech-input" id="tc-frontend" data-cat="frontend" oninput="validateTechField('tc-frontend')" placeholder="e.g. React 18, Next.js, Thymeleaf" />
-          <div class="tech-error" id="tc-frontend-err"></div>
-        </div>
-        <div class="tech-field">
-          <label class="tech-label">Backend</label>
-          <input class="tech-input" id="tc-backend" data-cat="backend" oninput="validateTechField('tc-backend')" placeholder="e.g. Spring Boot, Node.js + Express" />
-          <div class="tech-error" id="tc-backend-err"></div>
-        </div>
-        <div class="tech-field">
-          <label class="tech-label">Database</label>
-          <input class="tech-input" id="tc-database" data-cat="database" oninput="validateTechField('tc-database')" placeholder="e.g. PostgreSQL, MySQL, MongoDB" />
-          <div class="tech-error" id="tc-database-err"></div>
-        </div>
-        <div class="tech-field">
-          <label class="tech-label">Auth</label>
-          <input class="tech-input" id="tc-auth" data-cat="auth" oninput="validateTechField('tc-auth')" placeholder="e.g. JWT, OAuth2, Firebase Auth" />
-          <div class="tech-error" id="tc-auth-err"></div>
-        </div>
-        <div class="tech-field">
-          <label class="tech-label">Hosting</label>
-          <input class="tech-input" id="tc-hosting" data-cat="hosting" oninput="validateTechField('tc-hosting')" placeholder="e.g. Vercel + Render (free) · Vercel + Railway · Cloudflare Pages + Render" />
-          <div class="tech-error" id="tc-hosting-err"></div>
-        </div>
-        <div class="tech-field">
-          <label class="tech-label">Other Tools</label>
-          <input class="tech-input" id="tc-other" placeholder="e.g. Stripe, Redis, Cloudinary" />
-        </div>
+      <div class="tech-grid" id="tech-grid">
+        <!-- fields injected per-domain by renderBriefCard() -->
       </div>
       <button class="btn-confirm-generate" id="confirm-gen-btn" onclick="confirmAndGenerate()">
         ⚡ Looks good — Generate Full PRD
@@ -1850,9 +1892,140 @@ function fillExample(i) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  DOMAINS — each project type drives its own stack fields,
+//  Stage-1 inference, validation, and full PRD template.
+// ═══════════════════════════════════════════════════════════
+let currentDomainId = 'web';
+
+const DOMAINS = {
+  web: {
+    id: 'web', label: 'Fullstack / Web App', icon: '🌐',
+    sub: 'SaaS, marketplaces, dashboards, CRUD apps, mobile backends',
+    sectionCount: 17,
+    stackFields: [
+      { key: 'frontend',   label: 'Frontend',    cat: 'frontend', desc: 'Specific frontend framework/tech (e.g. React 18, Next.js 14, Vue 3, Thymeleaf)', placeholder: 'e.g. React 18, Next.js, Thymeleaf' },
+      { key: 'backend',    label: 'Backend',     cat: 'backend',  desc: 'Specific backend (e.g. Spring Boot 3.2, Django 4.2, Node.js + Express, FastAPI)', placeholder: 'e.g. Spring Boot, Node.js + Express' },
+      { key: 'database',   label: 'Database',    cat: 'database', desc: 'Specific DB (e.g. PostgreSQL 16, MySQL 8, MongoDB 7)', placeholder: 'e.g. PostgreSQL, MySQL, MongoDB' },
+      { key: 'auth',       label: 'Auth',        cat: 'auth',     desc: 'Auth method (e.g. JWT + Spring Security, JWT + Passport.js, Session-based, Firebase Auth)', placeholder: 'e.g. JWT, OAuth2, Firebase Auth' },
+      { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)'", placeholder: 'e.g. Vercel + Render + Supabase' },
+      { key: 'otherTools', label: 'Other Tools', cat: null,       desc: 'Other tools like Redis, Stripe, SendGrid, Cloudinary (or "None")', placeholder: 'e.g. Stripe, Redis, Cloudinary' }
+    ],
+    expandHint: 'Infer a sensible web stack. Always recommend FREE hosting (Vercel, Render, Railway, Supabase, Cloudflare Pages) — never paid defaults like AWS EC2/DigitalOcean/Heroku.',
+    progressSteps: [[16,'Designing system architecture…'],[30,'Writing database schema…'],[45,'Defining API endpoints…'],[58,'Building feature breakdown…'],[70,'Writing auth & security…'],[82,'Writing deployment guide…'],[93,'Finalizing all sections…']],
+    build: (b) => buildWebPrompt(b)
+  },
+
+  ml: {
+    id: 'ml', label: 'AI / ML', icon: '🤖',
+    sub: 'Model training, LLM apps, computer vision, recommendation, MLOps',
+    sectionCount: 16,
+    stackFields: [
+      { key: 'language',     label: 'Language',          cat: 'language',    desc: 'Primary language (e.g. Python 3.11)', placeholder: 'e.g. Python 3.11' },
+      { key: 'mlFramework',  label: 'ML Framework',      cat: 'mlframework', desc: 'Core ML/DL framework (e.g. PyTorch 2.x, TensorFlow, scikit-learn, Hugging Face Transformers)', placeholder: 'e.g. PyTorch, scikit-learn, Hugging Face' },
+      { key: 'dataStore',    label: 'Data Store',        cat: 'warehouse',   desc: 'Where training/feature data lives (e.g. S3 + Parquet, Snowflake, PostgreSQL, BigQuery)', placeholder: 'e.g. S3 + Parquet, Snowflake' },
+      { key: 'experiment',   label: 'Experiment Tracking', cat: 'mltrack',  desc: 'Experiment tracking / versioning (e.g. MLflow, Weights & Biases, DVC)', placeholder: 'e.g. MLflow, Weights & Biases' },
+      { key: 'serving',      label: 'Serving / Inference', cat: 'mlserve',  desc: 'How the model is served (e.g. FastAPI, BentoML, TorchServe, SageMaker endpoint)', placeholder: 'e.g. FastAPI, BentoML, Triton' },
+      { key: 'compute',      label: 'Compute / Infra',   cat: 'compute',     desc: 'Training/serving compute (e.g. AWS SageMaker, GCP Vertex, single GPU + Docker, Colab)', placeholder: 'e.g. GPU + Docker, SageMaker' },
+      { key: 'otherTools',   label: 'Other Tools',       cat: null,          desc: 'Other tools (e.g. Ray, Optuna, LangChain, vector DB like Pinecone) or "None"', placeholder: 'e.g. Ray, Optuna, Pinecone' }
+    ],
+    expandHint: 'Infer a realistic ML stack: language (usually Python), the right framework for the task (PyTorch/TF for deep learning, scikit-learn/XGBoost for tabular, Hugging Face for NLP/LLM), a data store, experiment tracking, a serving layer, and compute. coreFeatures should be ML capabilities/deliverables (e.g. "Train churn classifier", "Serve real-time inference API", "Nightly retraining").',
+    progressSteps: [[16,'Framing the ML problem & metrics…'],[30,'Designing data & features…'],[45,'Specifying model architecture…'],[58,'Writing training & eval protocol…'],[70,'Designing serving & MLOps…'],[82,'Writing monitoring & drift…'],[93,'Finalizing all sections…']],
+    build: (b) => buildMLPrompt(b)
+  },
+
+  data: {
+    id: 'data', label: 'Data Science & Analytics', icon: '📊',
+    sub: 'Pipelines, warehouses, dashboards, statistical analysis, BI',
+    sectionCount: 15,
+    stackFields: [
+      { key: 'language',      label: 'Language',       cat: 'language',      desc: 'Primary language(s) (e.g. Python, SQL, R)', placeholder: 'e.g. Python, SQL' },
+      { key: 'processing',    label: 'Processing',     cat: 'dataproc',      desc: 'Data processing/transform tools (e.g. pandas, Spark, dbt)', placeholder: 'e.g. pandas, Spark, dbt' },
+      { key: 'warehouse',     label: 'Warehouse / Store', cat: 'warehouse',  desc: 'Data warehouse / store (e.g. Snowflake, BigQuery, PostgreSQL, DuckDB)', placeholder: 'e.g. Snowflake, BigQuery, PostgreSQL' },
+      { key: 'orchestration', label: 'Orchestration',  cat: 'orchestration', desc: 'Pipeline orchestration (e.g. Airflow, Prefect, Dagster)', placeholder: 'e.g. Airflow, Prefect, Dagster' },
+      { key: 'bi',            label: 'BI / Viz',       cat: 'bi',            desc: 'BI / visualization (e.g. Tableau, Power BI, Metabase, Streamlit)', placeholder: 'e.g. Tableau, Power BI, Metabase' },
+      { key: 'hosting',       label: 'Infra / Hosting', cat: null,           desc: 'Where it runs (e.g. cloud warehouse + containerized jobs)', placeholder: 'e.g. GCP, AWS, on-prem' },
+      { key: 'otherTools',    label: 'Other Tools',    cat: null,            desc: 'Other tools (e.g. Great Expectations, Kafka, Fivetran) or "None"', placeholder: 'e.g. Great Expectations, Kafka' }
+    ],
+    expandHint: 'Infer a realistic data/analytics stack: language (Python/SQL), processing (pandas/Spark/dbt), a warehouse, orchestration, and a BI tool. coreFeatures should be analytics deliverables (e.g. "Ingest & model sales data", "Build executive KPI dashboard", "Cohort retention analysis").',
+    progressSteps: [[16,'Defining objectives & KPIs…'],[30,'Mapping data sources & lineage…'],[45,'Designing ingestion & ETL…'],[58,'Modeling the warehouse…'],[70,'Specifying analysis methodology…'],[82,'Designing dashboards…'],[93,'Finalizing all sections…']],
+    build: (b) => buildDataPrompt(b)
+  },
+
+  security: {
+    id: 'security', label: 'Cybersecurity', icon: '🔐',
+    sub: 'Threat models, security tooling, pentest plans, compliance, SOC',
+    sectionCount: 15,
+    stackFields: [
+      { key: 'targetSystem', label: 'System Under Protection', cat: null,        desc: 'What is being secured (e.g. a web app + REST API, internal network, cloud workloads)', placeholder: 'e.g. Web app + API, cloud infra' },
+      { key: 'language',     label: 'Language / Tooling Lang', cat: 'language',  desc: 'Implementation language for tooling/automation (e.g. Python, Go, Bash)', placeholder: 'e.g. Python, Go, Bash' },
+      { key: 'securityTools',label: 'Security Tools',          cat: 'sectool',   desc: 'Security tools (e.g. Nmap, Burp Suite, Metasploit, OWASP ZAP, Trivy)', placeholder: 'e.g. Nmap, Burp Suite, OWASP ZAP' },
+      { key: 'siem',         label: 'Monitoring / SIEM',       cat: 'siem',      desc: 'Logging/monitoring/SIEM (e.g. Splunk, ELK, Wazuh)', placeholder: 'e.g. Splunk, ELK, Wazuh' },
+      { key: 'compliance',   label: 'Compliance Targets',      cat: 'compliance',desc: 'Frameworks to align with (e.g. OWASP Top 10, SOC2, ISO 27001, NIST)', placeholder: 'e.g. OWASP Top 10, SOC2, ISO 27001' },
+      { key: 'hosting',      label: 'Infra / Hosting',         cat: null,        desc: 'Where the system/tooling runs (e.g. AWS, on-prem, Kubernetes)', placeholder: 'e.g. AWS, on-prem, Kubernetes' },
+      { key: 'otherTools',   label: 'Other Tools',             cat: null,        desc: 'Other tools (e.g. HashiCorp Vault, Falco, OPA) or "None"', placeholder: 'e.g. Vault, Falco, OPA' }
+    ],
+    expandHint: 'Infer a realistic security project: identify the system under protection, tooling language, security tools, a SIEM/monitoring stack, and relevant compliance frameworks. coreFeatures should be security capabilities/deliverables (e.g. "Threat model the API", "Automated vuln scanning in CI", "Incident response runbook", "OWASP Top 10 remediation").',
+    progressSteps: [[16,'Scoping assets & attack surface…'],[30,'Building the threat model…'],[45,'Specifying security controls…'],[58,'Mapping compliance…'],[70,'Designing detection & logging…'],[82,'Writing incident response…'],[93,'Finalizing all sections…']],
+    build: (b) => buildSecurityPrompt(b)
+  }
+};
+
+function getDomain(id) { return DOMAINS[id] || DOMAINS.web; }
+
+function selectDomain(id) {
+  if (!DOMAINS[id]) return;
+  currentDomainId = id;
+  document.querySelectorAll('.domain-pill').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-domain') === id);
+  });
+  const d = getDomain(id);
+  const ta = document.getElementById('idea-input');
+  if (ta) ta.setAttribute('placeholder', d.ideaPlaceholder || "Even a one-liner works — we'll infer the rest. The more detail you give, the richer the PRD.");
+  // Hide any stale brief card so fields rebuild for the new domain on next run.
+  const card = document.getElementById('brief-card');
+  if (card) card.style.display = 'none';
+}
+
+const DOMAIN_IDEA_PLACEHOLDERS = {
+  web: "Even a one-liner works — e.g. 'blog website in java fullstack' or 'kanban SaaS in MERN'.",
+  ml: "Even a one-liner works — e.g. 'churn prediction model' or 'RAG chatbot over our docs'.",
+  data: "Even a one-liner works — e.g. 'sales analytics warehouse + dashboard' or 'customer cohort analysis'.",
+  security: "Even a one-liner works — e.g. 'threat model + pentest plan for our API' or 'SOC2 readiness for a SaaS'."
+};
+Object.keys(DOMAIN_IDEA_PLACEHOLDERS).forEach(k => { DOMAINS[k].ideaPlaceholder = DOMAIN_IDEA_PLACEHOLDERS[k]; });
+
+// ═══════════════════════════════════════════════════════════
 //  STAGE 1 — EXPAND any idea (even a one-liner) into a full brief
 // ═══════════════════════════════════════════════════════════
 function buildExpandPrompt(rawIdea) {
+  const d = getDomain(currentDomainId);
+  const stackLines = d.stackFields.map(f => `  "${f.key}": "${f.desc}"`).join(',\n');
+  return `A user gave you a ${d.label} project idea. It might be a single vague sentence, a typo-filled one-liner, or a detailed paragraph. Expand it into a complete, specific project brief.
+
+USER INPUT: "${rawIdea}"
+PROJECT DOMAIN: ${d.label}
+
+${d.expandHint}
+
+Infer everything that's missing and be specific with versions/tools.
+
+Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Just raw JSON:
+
+{
+  "projectName": "Inferred project name (2-4 words, title case)",
+  "appType": "Short type label appropriate to a ${d.label} project",
+  "oneLiner": "One crisp sentence describing what it does",
+  "targetUsers": "Who will use this or benefit (be specific)",
+  "coreProblem": "What pain point does this solve?",
+${stackLines},
+  "coreFeatures": ["capability 1", "capability 2", "capability 3", "capability 4", "capability 5"],
+  "niceToHave": ["item A", "item B", "item C"],
+  "outOfScope": ["thing 1", "thing 2"]
+}`;
+}
+
+// Legacy web-only expand prompt kept for reference / fallback.
+function buildExpandPromptLegacy(rawIdea) {
   return `A user gave you a project idea. It might be a single vague sentence, a typo-filled one-liner, or a detailed paragraph. Your job is to intelligently expand it into a complete, specific project brief that a developer can work from.
 
 USER INPUT: "${rawIdea}"
@@ -1888,9 +2061,13 @@ Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Ju
 }
 
 // ═══════════════════════════════════════════════════════════
-//  STAGE 2 — Build full PRD prompt from expanded brief
+//  STAGE 2 — Build full PRD prompt from expanded brief (domain dispatch)
 // ═══════════════════════════════════════════════════════════
 function buildPRDPrompt(brief) {
+  return getDomain(brief.domain || currentDomainId).build(brief);
+}
+
+function buildWebPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   // ── Feature detection (PRECISE) ──
   // Only scan the structured fields (otherTools + coreFeatures), never the free-text
@@ -2162,6 +2339,338 @@ ${extras}
 *End of PRD — ${brief.projectName} v1.0*`;
 }
 
+// ═══════════════════════════════════════════════════════════
+//  STAGE 2 — AI / ML PRD template
+// ═══════════════════════════════════════════════════════════
+function buildMLPrompt(brief) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
+  return `PROJECT: ${brief.projectName} (${brief.appType})
+STACK: ${g('language','Python')} + ${g('mlFramework')} | Data: ${g('dataStore')} | Tracking: ${g('experiment')} | Serving: ${g('serving')} | Compute: ${g('compute')}
+TOOLS: ${g('otherTools','None')}
+USERS / STAKEHOLDERS: ${brief.targetUsers}
+PROBLEM: ${brief.coreProblem}
+CAPABILITIES: ${(brief.coreFeatures||[]).join(' | ')}
+NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
+OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
+DATE: ${today}
+
+Write a professional ML/AI Product Requirements Document in Markdown. Specification prose + tables only. No full training loops, no model class bodies, no notebook dumps.
+
+# ${brief.projectName} — ML PRD
+*${today} | v1.0 | ${g('mlFramework')} on ${g('language','Python')}*
+
+## 1. Executive Summary
+4 paragraphs: what the system predicts/generates · why it matters · who consumes the output · MVP scope + what "good enough to ship" means.
+### Business Goals
+5 measurable goals (tie model quality to a business KPI).
+### Non-Goals
+Out-of-scope items with one-line reason each.
+
+## 2. ML Problem Framing
+| Aspect | Specification |
+|--------|---------------|
+(rows: Task type [classification/regression/ranking/generation/clustering], Prediction target, Input(s), Output + shape, Online vs batch, Latency budget, Baseline to beat)
+### Success Metrics
+| Metric | Definition | Target | Why This Metric |
+(rows appropriate to the task — e.g. Precision/Recall/F1, ROC-AUC, PR-AUC, RMSE/MAE, MAP@k, BLEU/ROUGE, calibration; include the PRIMARY metric and guardrail metrics)
+
+## 3. Data Specification
+### Data Sources
+| Source | Type | Volume | Refresh | Owner | PII? |
+### Schema / Feature Dictionary
+| Field | Type | Description | Example | Nullable | Leakage Risk |
+(every input feature + the label)
+### Dataset Cards & Splits
+| Split | Size | Time Range | Sampling | Notes |
+(train/validation/test; explain temporal vs random split and why; class balance)
+### Labeling
+How labels are produced (source of truth, annotation guidelines, inter-annotator agreement, label noise handling).
+
+## 4. Feature Engineering & Preprocessing
+| Step | Transform | Applies To | Fit-on-train-only? | Rationale |
+(scaling, encoding, imputation, tokenization, embeddings, windowing). State the train/serve skew prevention strategy (feature store or shared transform pipeline).
+
+## 5. Modeling Approach
+### Candidate Models
+| Model | Family | Pros | Cons | When Chosen |
+(include a simple baseline + the proposed model)
+### Selected Architecture
+Describe the chosen model in prose: layers/components or algorithm + key hyperparameters as a table (Hyperparameter | Value | Search Range). NO model class code.
+
+## 6. Training Protocol
+| Aspect | Specification |
+(rows: hardware/${g('compute')}, framework ${g('mlFramework')}, optimizer, LR schedule, batch size, epochs/early-stopping, loss function, regularization, cross-validation, seed/reproducibility, expected wall-clock + cost). Describe HPO strategy (grid/random/Bayesian/Optuna) in prose.
+
+## 7. Evaluation & Validation
+### Offline Evaluation
+| Metric | Test Value (target) | Slice | Acceptance Threshold |
+(overall + sliced metrics across key segments to surface bias)
+### Error Analysis
+How failure cases are inspected and categorized; confusion matrix / residual review plan.
+### Online Evaluation
+A/B or shadow-deployment plan: traffic %, guardrail metrics, rollback trigger.
+
+## 8. Experiment Tracking & Reproducibility
+Using ${g('experiment','MLflow')}: what is logged (params, metrics, artifacts, dataset version, git SHA). Model & data versioning strategy. Model registry stages (Staging → Production → Archived).
+
+## 9. Inference & Serving
+### Serving Design
+Pattern (real-time REST / batch / streaming) on ${g('serving','FastAPI')}. Describe request flow: input → preprocess → predict → postprocess → response.
+### Prediction API
+| Method | Endpoint | Request Schema | Response Schema | Latency Target |
+\`\`\`json
+{ "request": { "...": "..." }, "response": { "prediction": "...", "score": 0.0, "model_version": "v1" } }
+\`\`\`
+
+## 10. MLOps & CI/CD
+| Stage | Tool | What Happens |
+(data validation → training pipeline → eval gate → registry → deploy → rollback). Retraining trigger (schedule or data-drift threshold). Describe the pipeline DAG in prose.
+
+## 11. Monitoring & Drift Detection
+| Signal | Metric | Threshold | Action |
+(data drift [PSI/KL], concept drift, prediction distribution, latency, error rate, feedback/ground-truth lag). Alerting + dashboards.
+
+## 12. Responsible AI & Risk
+| Risk | Description | Mitigation |
+(bias/fairness across protected slices, hallucination/safety [if generative], privacy/PII, explainability [SHAP/feature importance], misuse, regulatory). Human-in-the-loop policy.
+
+## 13. Infrastructure & Cost
+Compute on ${g('compute')}: training vs serving resources, autoscaling, estimated monthly cost. Prefer free/low-cost tiers where possible.
+
+## 14. Environment Variables
+| Variable | Example Value | Description | Required | Component |
+(data store creds, ${g('experiment','MLflow')} URI, model registry, serving secrets, cloud creds)
+
+## 15. Project Structure & Build Order
+\`\`\`
+project-root/
+├── data/            ← raw / interim / processed
+├── notebooks/       ← exploration only
+├── src/
+│   ├── data/        ← ingestion + validation
+│   ├── features/    ← transforms (shared train/serve)
+│   ├── models/      ← train.py, evaluate.py
+│   ├── serving/     ← ${g('serving','FastAPI')} app
+│   └── pipelines/   ← orchestration DAGs
+├── configs/         ← yaml hyperparams
+├── tests/
+└── ${'Dockerfile'}
+[expand every folder with ← comments]
+\`\`\`
+### Build Order / Checklist
+Phase 1 Data & validation · Phase 2 Baseline model · Phase 3 Feature pipeline · Phase 4 Model + HPO · Phase 5 Evaluation gate · Phase 6 Serving API · Phase 7 MLOps + monitoring · Phase 8 Deploy. One concrete task per phase with file names.
+
+## 16. Glossary
+| Term | Definition |
+(20+ rows: every framework, metric, ML concept, and acronym used — plain-English)
+
+*End of PRD — ${brief.projectName} v1.0*`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STAGE 2 — Data Science & Analytics PRD template
+// ═══════════════════════════════════════════════════════════
+function buildDataPrompt(brief) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
+  return `PROJECT: ${brief.projectName} (${brief.appType})
+STACK: ${g('language','Python + SQL')} | Processing: ${g('processing')} | Warehouse: ${g('warehouse')} | Orchestration: ${g('orchestration')} | BI: ${g('bi')}
+INFRA: ${g('hosting')}
+TOOLS: ${g('otherTools','None')}
+STAKEHOLDERS: ${brief.targetUsers}
+PROBLEM: ${brief.coreProblem}
+DELIVERABLES: ${(brief.coreFeatures||[]).join(' | ')}
+NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
+OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
+DATE: ${today}
+
+Write a professional Data / Analytics Product Requirements Document in Markdown. Specification prose + tables only. SQL DDL and dbt-style model descriptions are allowed; no long Python scripts.
+
+# ${brief.projectName} — Data & Analytics PRD
+*${today} | v1.0 | ${g('warehouse','Warehouse')} · ${g('bi','BI')}*
+
+## 1. Executive Summary
+4 paragraphs: the decision/question this enables · why current reporting falls short · who consumes it · MVP scope + definition of done.
+### Objectives & KPIs
+| Objective | KPI | Definition | Target |
+### Non-Goals
+Out-of-scope items with one-line reason each.
+
+## 2. Key Business Questions
+Numbered list of the concrete questions the analytics must answer (e.g. "Which channels drive highest-LTV users?").
+
+## 3. Data Sources & Lineage
+| Source | System | Type | Volume | Refresh | Owner | PII? |
+### Lineage
+ASCII flow: Sources → Ingestion → Raw → Staging → Marts → BI. 2-sentence rationale for the architecture (e.g. ELT vs ETL, medallion layers).
+
+## 4. Ingestion & Pipeline
+| Dataset | Method | Frequency | Load Type | Idempotent? |
+(extraction method per source — e.g. Fivetran/${g('processing','custom')}, full vs incremental). Orchestrated by ${g('orchestration','Airflow')}: describe the DAG and dependencies in prose.
+
+## 5. Data Modeling (Warehouse)
+### Modeling Strategy
+Star schema / medallion (bronze/silver/gold) / Data Vault — pick one and justify in 2 sentences.
+### Core Tables / Models
+\`\`\`sql
+-- Staging + mart DDL for the key tables. Exact types, PK/FK, partitioning/clustering keys.
+-- CRITICAL ORDERING: referenced tables before referencing tables.
+\`\`\`
+### Dimensional Model
+| Model | Grain | Type (fact/dim) | Key Columns | Source |
+
+## 6. Transformations & Business Logic
+| Metric / Field | Definition (SQL logic in prose) | Source Columns | Owner |
+(define every non-trivial metric ONCE here — single source of truth; note SCD handling for dimensions)
+
+## 7. Analysis Methodology
+For each key question: approach (descriptive / diagnostic / statistical test / cohort / funnel / forecasting), method, assumptions, and validity threats. Name statistical tests where relevant (t-test, chi-square, regression) and significance level.
+
+## 8. Dashboards & Reporting
+| Dashboard | Audience | Key Visuals | Filters | Refresh |
+(built in ${g('bi','the BI tool')}). Describe the layout and the decision each chart supports.
+
+## 9. Metrics Dictionary
+| Metric | Definition | Formula | Grain | Owner |
+(the canonical, governed metric definitions)
+
+## 10. Data Quality & Validation
+| Check | Rule | Severity | Action on Failure |
+(freshness, volume, schema, null/uniqueness, referential integrity, range). Tooling (e.g. ${g('otherTools','Great Expectations / dbt tests')}). Where checks run in the pipeline.
+
+## 11. Orchestration & Scheduling
+${g('orchestration','Airflow')} schedule table | DAG | Trigger | SLA | Retry | Alerting. Backfill strategy.
+
+## 12. Governance, Access & Privacy
+| Asset | Classification | Who Has Access | Masking/PII Handling |
+Role-based access, PII masking, retention policy, audit logging.
+
+## 13. Infrastructure & Cost
+Warehouse sizing/credits, compute for jobs, cost controls, free/low-cost tiers where possible.
+
+## 14. Environment Variables & Project Structure
+| Variable | Example | Description | Required | Component |
+\`\`\`
+project-root/
+├── ingestion/      ← extract-load jobs
+├── transform/      ← dbt models (staging/marts) or SQL
+├── dags/           ← ${g('orchestration','Airflow')} pipelines
+├── analysis/       ← notebooks + scripts
+├── dashboards/     ← BI definitions
+├── tests/          ← data quality checks
+└── .env.example
+[expand with ← comments]
+\`\`\`
+### Build Order
+Phase 1 Sources & ingestion · Phase 2 Staging models · Phase 3 Marts/dimensional · Phase 4 Metrics layer · Phase 5 Quality checks · Phase 6 Dashboards · Phase 7 Orchestration · Phase 8 Handover. One concrete task each.
+
+## 15. Glossary
+| Term | Definition |
+(20+ rows: every tool, modeling term, statistical method, acronym — plain-English)
+
+*End of PRD — ${brief.projectName} v1.0*`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STAGE 2 — Cybersecurity PRD template
+// ═══════════════════════════════════════════════════════════
+function buildSecurityPrompt(brief) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
+  return `PROJECT: ${brief.projectName} (${brief.appType})
+SYSTEM UNDER PROTECTION: ${g('targetSystem')}
+STACK: ${g('language')} | Tools: ${g('securityTools')} | SIEM: ${g('siem')} | Compliance: ${g('compliance')}
+INFRA: ${g('hosting')}
+TOOLS: ${g('otherTools','None')}
+STAKEHOLDERS: ${brief.targetUsers}
+PROBLEM: ${brief.coreProblem}
+CAPABILITIES: ${(brief.coreFeatures||[]).join(' | ')}
+NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
+OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
+DATE: ${today}
+
+Write a professional Cybersecurity Product Requirements Document in Markdown. Specification prose + tables only. Config snippets and command references are allowed; NEVER include working exploit/attack code or payloads.
+
+# ${brief.projectName} — Security PRD
+*${today} | v1.0 | ${g('compliance','Security')} aligned*
+
+## 1. Executive Summary
+4 paragraphs: what is being protected · the risk landscape · who owns/operates it · MVP scope + definition of done.
+### Security Objectives
+5 measurable objectives (tie to risk reduction / compliance).
+### Non-Goals
+Out-of-scope items with one-line reason each.
+
+## 2. Scope & Assets
+| Asset | Type | Sensitivity | Owner | Exposure (Internet/Internal) |
+(data stores, services, endpoints, secrets, infra for ${g('targetSystem')})
+### Trust Boundaries
+ASCII diagram of zones (Internet → Edge → App → Data) with trust boundaries marked.
+
+## 3. Threat Model (STRIDE)
+| Threat (STRIDE) | Asset | Attack Vector | Likelihood | Impact | Risk |
+(Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation — concrete to this system). Note key entries from the attack surface / kill chain.
+
+## 4. Security Controls
+| Control | Type (Preventive/Detective/Responsive) | Threat Addressed | Implementation | Priority |
+(map controls back to Section 3 threats)
+
+## 5. Identity, Authentication & Authorization
+AuthN mechanism, MFA policy, session/token strategy, least-privilege RBAC model.
+| Role | Permissions | Justification |
+
+## 6. Data Protection
+| Data Class | At Rest | In Transit | Key Management | Retention |
+(encryption standards — e.g. AES-256, TLS 1.3 — secrets management, tokenization/masking)
+
+## 7. Network & Infrastructure Security
+Segmentation, firewall/WAF rules, ingress/egress policy, hardening baselines (CIS), patch management for ${g('hosting')}.
+
+## 8. Application Security
+SDLC controls: SAST/DAST/SCA (${g('securityTools','e.g. Semgrep, OWASP ZAP, Trivy')}), dependency scanning, secrets scanning, secure code review gates in CI. Map to OWASP Top 10.
+
+## 9. Vulnerability Management
+| Stage | Tool | Frequency | SLA to Remediate (by severity) |
+(scanning with ${g('securityTools')}, triage, CVSS scoring, patch SLAs)
+
+## 10. Detection, Logging & Monitoring
+Using ${g('siem','the SIEM')}: log sources, what is collected, retention, key detection rules/use-cases, alert routing.
+| Detection Use-Case | Data Source | Trigger | Severity | Response |
+
+## 11. Incident Response Plan
+Phases (Prepare → Detect → Contain → Eradicate → Recover → Lessons Learned). Roles & escalation. Communication plan.
+| Severity | Definition | Response Time | Escalation |
+
+## 12. Compliance Mapping
+| Requirement (${g('compliance','OWASP/SOC2/ISO 27001')}) | Control | Evidence | Status |
+(map the relevant frameworks to concrete controls in this doc)
+
+## 13. Security Testing & Pentest Plan
+Scope, rules of engagement, methodology (recon → scanning → exploitation → reporting — described, NOT executed), cadence, and reporting format. Red/blue/purple team approach if relevant.
+
+## 14. Environment / Secrets & Project Structure
+| Variable / Secret | Storage | Description | Rotation |
+\`\`\`
+project-root/
+├── policies/        ← security policies & runbooks
+├── iac/             ← hardened infra-as-code
+├── ci/              ← scanning pipelines
+├── detections/      ← SIEM rules
+├── scripts/         ← automation (${g('language','Python')})
+└── docs/            ← threat model, IR plan
+[expand with ← comments]
+\`\`\`
+### Implementation Order
+Phase 1 Asset inventory · Phase 2 Threat model · Phase 3 Baseline controls · Phase 4 AuthN/Z + data protection · Phase 5 Detection/logging · Phase 6 Vuln scanning in CI · Phase 7 IR runbooks · Phase 8 Compliance evidence. One concrete task each.
+
+## 15. Glossary
+| Term | Definition |
+(20+ rows: every tool, framework, attack/defense term, acronym — plain-English)
+
+*End of PRD — ${brief.projectName} v1.0*`;
+}
+
 
 // ═══════════════════════════════════════════════════════════
 //  TOKEN ESTIMATION + BUDGET
@@ -2268,12 +2777,31 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
 const TECH_SETS = {
   frontend: ['react','vue','angular','svelte','sveltekit','next.js','nextjs','next','nuxt','solid','solidjs','qwik','astro','remix','thymeleaf','blazor','jquery','ember','backbone','preact','lit','htmx','material-ui','mui','tailwind','bootstrap','chakra','vuetify','antd','ant design'],
   backend: ['spring','spring boot','django','flask','fastapi','express','express.js','nestjs','nest','node','node.js','laravel','symfony','rails','ruby on rails','.net','asp.net','dotnet','gin','fiber','echo','phoenix','koa','hapi','adonis','strapi','ktor','micronaut','quarkus'],
-  database: ['postgres','postgresql','postgre','mysql','mariadb','mongodb','mongo','sqlite','sql server','mssql','oracle','dynamodb','firestore','firebase','cassandra','couchdb','couchbase','neo4j','cockroachdb','planetscale','supabase','redis','snowflake','bigquery','elasticsearch','influxdb','timescaledb'],
+  database: ['postgres','postgresql','postgre','mysql','mariadb','mongodb','mongo','sqlite','sql server','mssql','oracle','dynamodb','firestore','firebase','cassandra','couchdb','couchbase','neo4j','cockroachdb','planetscale','supabase','redis','snowflake','bigquery','elasticsearch','influxdb','timescaledb','duckdb','clickhouse'],
   auth: ['jwt','oauth','oauth2','passport','passport.js','auth0','clerk','cognito','firebase','firebase auth','keycloak','okta','session','sessions','spring security','devise','lucia','supertokens','nextauth','next-auth','magic link'],
-  hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase']
+  hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase'],
+  // ── ML / Data / Security categories ──
+  language: ['python','r','julia','scala','sql','matlab','sas','java','c++','cpp','go','golang','rust','typescript','javascript','bash','shell','powershell','kotlin'],
+  mlframework: ['pytorch','torch','tensorflow','tf','keras','scikit-learn','sklearn','scikit learn','xgboost','lightgbm','catboost','jax','hugging face','huggingface','transformers','fastai','spacy','nltk','opencv','langchain','llama','llamaindex','openai','mlx','onnx','statsmodels'],
+  mltrack: ['mlflow','weights & biases','wandb','w&b','dvc','neptune','comet','tensorboard','clearml','sacred'],
+  mlserve: ['fastapi','flask','bentoml','torchserve','tensorflow serving','tf serving','triton','sagemaker','vertex ai','vertex','kserve','seldon','ray serve','ray','modal','replicate','gradio','streamlit'],
+  compute: ['gpu','cpu','cuda','aws','gcp','azure','sagemaker','vertex','colab','google colab','kaggle','lambda labs','runpod','vast.ai','kubernetes','k8s','ray','databricks','slurm'],
+  dataproc: ['spark','pyspark','pandas','polars','dask','dbt','airflow','prefect','dagster','kafka','flink','beam','databricks','duckdb','ray'],
+  warehouse: ['snowflake','bigquery','redshift','postgres','postgresql','duckdb','clickhouse','databricks','synapse','athena','firebolt'],
+  bi: ['tableau','power bi','powerbi','looker','metabase','superset','grafana','streamlit','plotly','dash','kibana','mode','hex','quicksight','redash'],
+  orchestration: ['airflow','prefect','dagster','luigi','mage','kestra','argo','step functions'],
+  sectool: ['nmap','wireshark','burp','burp suite','metasploit','owasp zap','zap','nessus','openvas','snort','suricata','nikto','sqlmap','john','john the ripper','hashcat','hydra','kali','aircrack','gobuster','ffuf','semgrep','trivy','snyk','bandit','wazuh','osquery'],
+  siem: ['splunk','elk','elastic','elasticsearch','wazuh','qradar','sentinel','microsoft sentinel','graylog','datadog','sumo logic','chronicle'],
+  compliance: ['owasp','soc2','soc 2','iso 27001','iso27001','iso','nist','pci dss','pci','gdpr','hipaa','cis','fedramp','ccpa']
 };
 
-const CAT_LABEL = { frontend: 'Frontend', backend: 'Backend', database: 'Database', auth: 'Auth', hosting: 'Hosting' };
+const CAT_LABEL = {
+  frontend: 'Frontend', backend: 'Backend', database: 'Database', auth: 'Auth', hosting: 'Hosting',
+  language: 'a programming language', mlframework: 'an ML framework', mltrack: 'an experiment tracker',
+  mlserve: 'a model-serving tool', compute: 'compute/infra', dataproc: 'a data-processing tool',
+  warehouse: 'a data store/warehouse', bi: 'a BI/visualization tool', orchestration: 'an orchestrator',
+  sectool: 'a security tool', siem: 'a SIEM/monitoring tool', compliance: 'a compliance framework'
+};
 
 function tokenInValue(token, value) {
   const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2294,21 +2822,34 @@ function classifyTechValue(value) {
 function techFieldError(fieldCat, value) {
   const v = (value || '').trim();
   if (!v) return '';
+  if (!fieldCat || !TECH_SETS[fieldCat]) return '';   // unknown/free-form field → never block
   const cats = classifyTechValue(v);
   if (cats.size === 0) return '';        // unrecognized free text → allow
   if (cats.has(fieldCat)) return '';     // contains a valid term for this field → OK
   const others = [...cats].map(c => CAT_LABEL[c]).join(' / ');
-  return `“${v}” looks like ${others}, not ${CAT_LABEL[fieldCat]}. Enter a real ${CAT_LABEL[fieldCat].toLowerCase()} (e.g. ${exampleFor(fieldCat)}).`;
+  return `“${v}” looks like ${others}, not ${CAT_LABEL[fieldCat]}. Enter ${exampleFor(fieldCat)}.`;
 }
 
 function exampleFor(cat) {
   return {
-    frontend: 'React, Vue, Angular',
-    backend: 'Spring Boot, Django, Express',
-    database: 'PostgreSQL, MySQL, MongoDB',
-    auth: 'JWT, OAuth2, Firebase Auth',
-    hosting: 'Vercel, Render, Railway'
-  }[cat] || '';
+    frontend: 'a real frontend (e.g. React, Vue, Angular)',
+    backend: 'a real backend (e.g. Spring Boot, Django, Express)',
+    database: 'a real database (e.g. PostgreSQL, MySQL, MongoDB)',
+    auth: 'a real auth method (e.g. JWT, OAuth2, Firebase Auth)',
+    hosting: 'a real host (e.g. Vercel, Render, Railway)',
+    language: 'a language (e.g. Python, R, SQL)',
+    mlframework: 'an ML framework (e.g. PyTorch, TensorFlow, scikit-learn)',
+    mltrack: 'a tracker (e.g. MLflow, Weights & Biases, DVC)',
+    mlserve: 'a serving tool (e.g. FastAPI, BentoML, SageMaker)',
+    compute: 'compute (e.g. AWS, GCP, GPU/CUDA, Kubernetes)',
+    dataproc: 'a data tool (e.g. Spark, pandas, dbt, Airflow)',
+    warehouse: 'a data store (e.g. Snowflake, BigQuery, PostgreSQL)',
+    bi: 'a BI tool (e.g. Tableau, Power BI, Metabase)',
+    orchestration: 'an orchestrator (e.g. Airflow, Prefect, Dagster)',
+    sectool: 'a security tool (e.g. Nmap, Burp Suite, Metasploit)',
+    siem: 'a SIEM (e.g. Splunk, ELK, Wazuh)',
+    compliance: 'a framework (e.g. OWASP, SOC2, ISO 27001)'
+  }[cat] || 'a valid value';
 }
 
 // Validate one field, update its UI, return true if valid.
@@ -2317,6 +2858,7 @@ function validateTechField(inputId) {
   if (!input) return true;
   const cat = input.getAttribute('data-cat');
   const errEl = document.getElementById(inputId + '-err');
+  if (!cat) { input.classList.remove('invalid'); if (errEl) errEl.classList.remove('show'); return true; }
   const msg = techFieldError(cat, input.value);
   if (msg) {
     input.classList.add('invalid');
@@ -2328,12 +2870,12 @@ function validateTechField(inputId) {
   return true;
 }
 
-// Validate every category field; returns the first invalid input id, or null if all OK.
+// Validate every category field of the active domain; returns first invalid id or null.
 function validateAllTechFields() {
-  const ids = ['tc-frontend', 'tc-backend', 'tc-database', 'tc-auth', 'tc-hosting'];
+  const d = getDomain(currentDomainId);
   let firstInvalid = null;
-  ids.forEach(id => {
-    if (!validateTechField(id) && !firstInvalid) firstInvalid = id;
+  d.stackFields.forEach(f => {
+    if (!validateTechField('tc-' + f.key) && !firstInvalid) firstInvalid = 'tc-' + f.key;
   });
   return firstInvalid;
 }
@@ -2370,16 +2912,25 @@ function renderBriefCard(brief) {
     </div>
   `;
 
-  // Populate editable tech stack inputs
-  document.getElementById('tc-frontend').value = brief.frontend || '';
-  document.getElementById('tc-backend').value  = brief.backend  || '';
-  document.getElementById('tc-database').value = brief.database || '';
-  document.getElementById('tc-auth').value     = brief.auth     || '';
-  document.getElementById('tc-hosting').value  = brief.hosting  || '';
-  document.getElementById('tc-other').value    = (brief.otherTools && brief.otherTools !== 'None') ? brief.otherTools : '';
+  // Build the tech-stack confirm grid for the ACTIVE domain
+  const d = getDomain(brief.domain || currentDomainId);
+  const grid = document.getElementById('tech-grid');
+  grid.innerHTML = d.stackFields.map(f => `
+    <div class="tech-field">
+      <label class="tech-label">${f.label}</label>
+      <input class="tech-input" id="tc-${f.key}" ${f.cat ? `data-cat="${f.cat}"` : ''} oninput="validateTechField('tc-${f.key}')" placeholder="${f.placeholder}" />
+      <div class="tech-error" id="tc-${f.key}-err"></div>
+    </div>`).join('');
+
+  // Populate with inferred values
+  d.stackFields.forEach(f => {
+    const el = document.getElementById('tc-' + f.key);
+    const v = brief[f.key];
+    el.value = (v && v !== 'None') ? v : '';
+  });
 
   // Reset any stale validation state, then validate the freshly inferred values.
-  ['tc-frontend','tc-backend','tc-database','tc-auth','tc-hosting'].forEach(validateTechField);
+  d.stackFields.forEach(f => validateTechField('tc-' + f.key));
 
   card.style.display = 'block';
 
@@ -2452,6 +3003,7 @@ async function generatePRD() {
       brief = buildFallbackBrief(idea);
     }
 
+    brief.domain = currentDomainId;
     _currentBrief = brief;
 
     // Show brief + tech confirm panel — user decides when to proceed
@@ -2464,6 +3016,24 @@ async function generatePRD() {
   } finally {
     document.getElementById('gen-btn').disabled = false;
     document.getElementById('confirm-gen-btn').disabled = false;
+  }
+}
+
+// Domain-specific addendum appended to the base system prompt.
+function domainSystemExtra(d) {
+  const common = `\n\nFOLLOW THE EXACT SECTION STRUCTURE in the user message — same headings, same order, every table populated with real rows. COVER EVERY TOOL listed in the STACK — each must appear in the relevant sections, never silently dropped.`;
+  if (d.id === 'web') {
+    return common + `\n\nDOMAIN = FULLSTACK WEB. Use FREE hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never recommend paid defaults like DigitalOcean/AWS EC2/Heroku. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend).`;
+  }
+  switch (d.id) {
+    case 'ml':
+      return common + `\n\nDOMAIN = AI/ML. This is NOT a web-app PRD: do NOT invent a frontend table, REST CRUD spec, or generic SQL schema unless the project genuinely needs them. Focus on data, features, model, training, evaluation metrics, serving, and MLOps. CODE ALLOWED ONLY FOR: data/feature schema tables, JSON request/response contracts, YAML config (hyperparameters/pipeline), metric tables, folder trees, env-var tables. NEVER write training loops, model class bodies, or notebook code. Choose metrics that fit the task (classification → precision/recall/F1/ROC-AUC; regression → RMSE/MAE/R²; ranking → MAP/NDCG; generative → BLEU/ROUGE + human eval). Always include a baseline and guardrail metrics.`;
+    case 'data':
+      return common + `\n\nDOMAIN = DATA/ANALYTICS. This is NOT a web-app PRD: do NOT invent a frontend, auth lifecycle, or REST CRUD spec unless genuinely needed. Focus on data sources, lineage, ingestion/ELT, warehouse modeling, transformations, analysis methodology, dashboards, and data quality. CODE ALLOWED ONLY FOR: SQL DDL + warehouse model definitions, metric definitions, config/YAML, folder trees, env-var tables. SQL CREATE TABLE statements MUST be in dependency order. Every metric must be defined exactly once in the metrics dictionary.`;
+    case 'security':
+      return common + `\n\nDOMAIN = CYBERSECURITY. This is NOT a feature-build PRD: focus on assets, threat model (STRIDE), controls, AuthN/Z, data protection, detection/logging, incident response, vuln management, pentest plan, and compliance mapping. CODE ALLOWED ONLY FOR: config snippets, control/detection-rule tables, command references, folder trees, secret/env tables. ABSOLUTELY NO working exploit code, payloads, or attack scripts — describe methodology only. Map controls back to specific threats and map compliance requirements to concrete controls.`;
+    default:
+      return common;
   }
 }
 
@@ -2483,16 +3053,13 @@ async function confirmAndGenerate() {
     return;
   }
 
-  // Merge any user edits back into the brief
-  const brief = {
-    ..._currentBrief,
-    frontend:   document.getElementById('tc-frontend').value.trim() || _currentBrief.frontend,
-    backend:    document.getElementById('tc-backend').value.trim()  || _currentBrief.backend,
-    database:   document.getElementById('tc-database').value.trim() || _currentBrief.database,
-    auth:       document.getElementById('tc-auth').value.trim()     || _currentBrief.auth,
-    hosting:    document.getElementById('tc-hosting').value.trim()  || _currentBrief.hosting,
-    otherTools: document.getElementById('tc-other').value.trim()    || _currentBrief.otherTools,
-  };
+  // Merge any user edits back into the brief (domain-aware fields)
+  const _dom = getDomain(_currentBrief.domain || currentDomainId);
+  const brief = { ..._currentBrief, domain: _dom.id };
+  _dom.stackFields.forEach(f => {
+    const el = document.getElementById('tc-' + f.key);
+    if (el) brief[f.key] = el.value.trim() || _currentBrief[f.key];
+  });
 
   document.getElementById('confirm-gen-btn').disabled = true;
   document.getElementById('gen-btn').disabled = true;
@@ -2507,14 +3074,14 @@ async function confirmAndGenerate() {
     document.getElementById('progress-bar').style.width = '8%';
     document.getElementById('progress-label').textContent = 'Stack confirmed — drafting PRD…';
 
-    const prdSteps = [
+    const prdSteps = _dom.progressSteps || [
       [16,  'Designing system architecture…'],
       [30,  'Writing database schema…'],
       [45,  'Defining API endpoints…'],
       [58,  'Building feature breakdown…'],
       [70,  'Writing auth & security sections…'],
       [82,  'Writing deployment guide…'],
-      [93,  'Finalizing all 16 sections…'],
+      [93,  'Finalizing all sections…'],
     ];
 
     let stepIdx = 0;
@@ -2579,15 +3146,16 @@ OUTPUT RULES:
 - Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
 - Every table must have real populated rows — no [example here].
 - Zero placeholders in tables, config values, or deployment commands.
-- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.
+- Prefer free or low-cost tiers wherever the project reasonably allows.
 - COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
 - ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
 - SQL: CREATE TABLE statements MUST be ordered so any table referenced by a FOREIGN KEY is defined before the table referencing it.`;
 
+    const fullSystemPrompt = prdSystemPrompt + domainSystemExtra(_dom);
     const stage2 = await callGroq({
-      systemPrompt: prdSystemPrompt,
+      systemPrompt: fullSystemPrompt,
       userPrompt: prdUserPrompt,
-      maxTokens: budgetMaxTokens(prdSystemPrompt, prdUserPrompt, MAX_TOKENS),
+      maxTokens: budgetMaxTokens(fullSystemPrompt, prdUserPrompt, MAX_TOKENS),
       temperature: 0.35
     });
 
@@ -2633,22 +3201,25 @@ function setProgress(pct, label, meta) {
 }
 
 function buildFallbackBrief(idea) {
-  return {
+  const d = getDomain(currentDomainId);
+  const common = {
+    domain: d.id,
     projectName: idea.length > 30 ? 'My Project' : idea.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
-    appType: 'Web App',
-    oneLiner: `A web application for: ${idea}`,
-    targetUsers: 'General users who need this type of application',
-    coreProblem: `Users currently lack a good solution for: ${idea}`,
-    frontend: 'React 18 + Vite',
-    backend: 'Node.js + Express',
-    database: 'PostgreSQL 16',
-    auth: 'JWT (JSON Web Tokens)',
-    hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier',
-    otherTools: 'None',
-    coreFeatures: ['User registration and login', 'Core CRUD operations', 'Dashboard / main interface', 'Data persistence', 'Responsive design'],
-    niceToHave: ['Email notifications', 'Search and filtering', 'Export functionality'],
-    outOfScope: ['Native mobile app', 'Multi-language support', 'Offline mode']
+    appType: d.label,
+    oneLiner: `A ${d.label} project for: ${idea}`,
+    targetUsers: 'The intended users / stakeholders for this project',
+    coreProblem: `There is currently no good solution for: ${idea}`,
+    coreFeatures: ['Core capability 1', 'Core capability 2', 'Core capability 3', 'Core capability 4', 'Core capability 5'],
+    niceToHave: ['Enhancement A', 'Enhancement B', 'Enhancement C'],
+    outOfScope: ['Out-of-scope item 1', 'Out-of-scope item 2']
   };
+  const defaults = {
+    web:      { frontend: 'React 18 + Vite', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier', otherTools: 'None' },
+    ml:       { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI + Docker', compute: 'Single GPU + Docker', otherTools: 'None' },
+    data:     { language: 'Python + SQL', processing: 'pandas + dbt', warehouse: 'PostgreSQL', orchestration: 'Airflow', bi: 'Metabase', hosting: 'Cloud (free tier)', otherTools: 'None' },
+    security: { targetSystem: 'Web app + REST API', language: 'Python', securityTools: 'OWASP ZAP, Trivy, Semgrep', siem: 'ELK', compliance: 'OWASP Top 10', hosting: 'AWS', otherTools: 'None' }
+  };
+  return { ...common, ...(defaults[d.id] || defaults.web) };
 }
 
 function showError(msg) {

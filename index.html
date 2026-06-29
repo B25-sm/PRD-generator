@@ -2088,8 +2088,52 @@ function buildPRDPrompt(brief) {
   return getDomain(brief.domain || currentDomainId).build(brief);
 }
 
+function inferWebStack(brief) {
+  const be = (brief.backend || '').toLowerCase();
+  const db = (brief.database || '').toLowerCase();
+  const fe = (brief.frontend || '').toLowerCase();
+  const tools = ((brief.otherTools || '') + ' ' + be).toLowerCase();
+
+  const pickOrm = (defaults) => {
+    if (/prisma/i.test(tools)) return 'Prisma';
+    if (/sequelize/i.test(tools)) return 'Sequelize';
+    if (/typeorm/i.test(tools)) return 'TypeORM';
+    if (/mongoose/i.test(tools) || /mongo/i.test(db)) return 'Mongoose';
+    if (/sqlalchemy/i.test(tools)) return 'SQLAlchemy';
+    return defaults.orm;
+  };
+
+  if (/spring|java|kotlin/.test(be))
+    return { lang: 'Java', framework: 'Spring Boot', orm: 'Spring Data JPA / Hibernate', rest: 'Spring Web (REST)', concepts: 'Entities, Repositories, Controllers, Services, DTOs, Security filters' };
+  if (/django/.test(be))
+    return { lang: 'Python', framework: 'Django', orm: 'Django ORM', rest: 'Django REST Framework', concepts: 'Models, Views/ViewSets, Serializers, URLs, Middleware, Signals' };
+  if (/fastapi/.test(be))
+    return { lang: 'Python', framework: 'FastAPI', orm: pickOrm({ orm: 'SQLAlchemy' }), rest: 'FastAPI routers', concepts: 'Models, Schemas/Pydantic, Routers, Dependencies, Services' };
+  if (/flask/.test(be))
+    return { lang: 'Python', framework: 'Flask', orm: pickOrm({ orm: 'SQLAlchemy / Flask-SQLAlchemy' }), rest: 'Flask blueprints', concepts: 'Models, Blueprints, Routes, Services, Marshmallow/schemas' };
+  if (/nestjs|nest\.js/.test(be))
+    return { lang: 'TypeScript', framework: 'NestJS', orm: pickOrm({ orm: 'Prisma or TypeORM' }), rest: 'NestJS controllers', concepts: 'Modules, Controllers, Services, DTOs, Guards, Pipes' };
+  if (/laravel/.test(be))
+    return { lang: 'PHP', framework: 'Laravel', orm: 'Eloquent ORM', rest: 'Laravel API routes', concepts: 'Models, Controllers, Resources, Middleware, Policies' };
+  if (/rails|ruby/.test(be))
+    return { lang: 'Ruby', framework: 'Ruby on Rails', orm: 'ActiveRecord', rest: 'Rails API', concepts: 'Models, Controllers, Serializers, Concerns, Jobs' };
+  if (/\.net|asp\.net|dotnet/.test(be))
+    return { lang: 'C#', framework: 'ASP.NET Core', orm: 'Entity Framework Core', rest: 'ASP.NET Core Web API', concepts: 'Entities, DbContext, Controllers, Services, DTOs, Middleware' };
+
+  // Default: Node.js / Express family
+  const isTS = /typescript|next\.js|nextjs|nest|angular|tsx/.test(fe + ' ' + be + ' ' + tools);
+  return {
+    lang: isTS ? 'TypeScript' : 'JavaScript',
+    framework: /express/.test(be) ? 'Express.js' : 'Node.js',
+    orm: pickOrm({ orm: /mongo/i.test(db) ? 'Mongoose' : 'Prisma' }),
+    rest: /express/.test(be) ? 'Express.js routes' : 'Node.js HTTP API',
+    concepts: 'Prisma schema / models, routes, controllers, middleware, services, validators (Zod/Joi)'
+  };
+}
+
 function buildWebPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const stack = inferWebStack(brief);
   // ── Feature detection (PRECISE) ──
   // Only scan the structured fields (otherTools + coreFeatures), never the free-text
   // oneLiner. Match genuine signals only — e.g. "email notifications" must NOT pull in
@@ -2127,6 +2171,14 @@ NICE-TO-HAVE: ${brief.niceToHave.join(' | ')}
 OUT OF SCOPE: ${brief.outOfScope.join(' | ')}
 DATE: ${today}
 
+STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
+- Backend language: ${stack.lang} — NEVER use Java/Python/PHP unless the backend field says so.
+- Backend framework: ${stack.framework} — match ${brief.backend} exactly.
+- ORM / data access: ${stack.orm} — NEVER use Spring Data JPA, Hibernate, Django ORM, or Eloquent unless that is the stated backend.
+- REST/API layer: ${stack.rest}
+- Frontend is ${brief.frontend}; backend is ${brief.backend}. Do NOT mix Spring/Java concepts into a Node stack or vice versa.
+- Every Tech Stack table row, architecture section, folder tree, and security note MUST reflect this stack only.
+
 Write a professional PRD in Markdown. Specification prose + tables only. No code implementations. No function bodies.
 
 # ${brief.projectName} — Product Requirements Document
@@ -2142,7 +2194,7 @@ Out-of-scope items with one-line reason each.
 ## 2. Tech Stack Overview
 ### Backend
 | Layer | Technology | Version | Purpose | Why Chosen |
-(8+ rows: language, framework, ORM, REST layer, auth, DB, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''})
+(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)
 ### Frontend
 | Layer | Technology | Version | Purpose | Why Chosen |
 (8+ rows: language, framework, build tool, router, state, styling, forms, HTTP client, testing)
@@ -2169,7 +2221,7 @@ backend/ file tree — every folder/file with ← role comment
 \`\`\`
 ### Framework Concepts Reference
 | Concept | Definition | Role in ${brief.projectName} | Key File |
-(10+ rows: Models, Views/Controllers, Serializers/DTOs, Middleware, Signals/Hooks, Admin, Router, etc.)
+(10+ rows for ${stack.framework}: ${stack.concepts}. Use ${stack.orm} terminology — NOT Spring/JPA/Hibernate unless backend is Spring Boot.)
 ### Data Modeling Approach
 Entity design philosophy: naming conventions, relationship strategy (FK/M2M/embedded), soft-delete pattern.
 
@@ -2273,7 +2325,7 @@ Separate DB setup, mocked external services, seed data strategy.
 
 ## 12. Security Checklist
 | Threat | Mitigation | Implementation Detail | Priority |
-| SQL Injection | ORM parameterized queries | All DB access via ${brief.backend} ORM; raw SQL banned | P0 |
+| SQL Injection | ORM parameterized queries | All DB access via ${stack.orm}; raw SQL banned | P0 |
 | XSS | Output escaping + CSP header | Framework escapes by default; CSP blocks inline scripts | P0 |
 | CSRF | SameSite=Strict cookie | Refresh cookie: SameSite=Strict; CSRF middleware enabled | P0 |
 | JWT Theft | Short-lived in-memory tokens | 15-min access token in Redux only; never localStorage | P0 |
@@ -3150,7 +3202,7 @@ async function generatePRD() {
 function domainSystemExtra(d) {
   const common = `\n\nFOLLOW THE EXACT SECTION STRUCTURE in the user message — same headings, same order, every table populated with real rows. COVER EVERY TOOL listed in the STACK — each must appear in the relevant sections, never silently dropped.`;
   if (d.id === 'web') {
-    return common + `\n\nDOMAIN = FULLSTACK WEB. Use FREE hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never recommend paid defaults like DigitalOcean/AWS EC2/Heroku. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend).`;
+    return common + `\n\nDOMAIN = FULLSTACK WEB. Use FREE hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never recommend paid defaults like DigitalOcean/AWS EC2/Heroku. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend). CRITICAL: The ORM and backend language MUST match the stated backend — Node.js + Express → Prisma/Sequelize/Mongoose (JavaScript/TypeScript); Spring Boot → JPA/Hibernate (Java); Django → Django ORM (Python). NEVER inject Spring/JPA/Hibernate into a Node stack or Express concepts into a Java stack.`;
   }
   switch (d.id) {
     case 'ml':

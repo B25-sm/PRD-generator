@@ -1475,6 +1475,14 @@ const GROQ_LIMITS = {
   // A full PRD uses ~12,000 tokens → must space requests 2+ min apart
   minSecsBetweenPRDs: 130,  // 2 min 10 sec buffer between full generations
 
+  // Groq enforces a per-request token ceiling (input + max_tokens) tied to the
+  // tokens-per-minute (TPM) limit. Exceeding it returns HTTP 413 "request too large".
+  // Free-tier TPM for llama-3.3-70b-versatile is 12,000. We keep a safety margin so a
+  // request never reserves more than fits, and we shrink max_tokens to stay under it.
+  tpmLimit: 12000,
+  tpmSafetyMargin: 800,
+  minCompletionTokens: 2048, // never trim the PRD budget below this
+
   // Requests/min Groq allows: 30. We use 2 per PRD (Stage 1 + Stage 2).
   // Cap to 3 PRDs/min absolute max = 6 API calls/min, well under 30.
   maxReqPerMin: 3,          // client-side PRD generations per minute
@@ -2126,10 +2134,23 @@ ${extras}
 
 
 // ═══════════════════════════════════════════════════════════
-//  GROQ CALL — reusable
+//  TOKEN ESTIMATION + BUDGET
+//  ~4 chars per token is a safe over-estimate for English + markdown.
 // ═══════════════════════════════════════════════════════════
+function estimateTokens(str) {
+  return Math.ceil((str || '').length / 4);
+}
+
+// Largest max_tokens we can request so that (input + max_tokens) stays under the TPM limit.
+function budgetMaxTokens(systemPrompt, userPrompt, desiredMax) {
+  const inputTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+  const room = GROQ_LIMITS.tpmLimit - inputTokens - GROQ_LIMITS.tpmSafetyMargin;
+  return Math.max(GROQ_LIMITS.minCompletionTokens, Math.min(desiredMax, room));
+}
+
 // ═══════════════════════════════════════════════════════════
 //  GROQ CALL — with exponential backoff retry on 429
+//  and auto-shrink retry on 413 (request too large for TPM)
 // ═══════════════════════════════════════════════════════════
 async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3 }, retryCount = 0) {
   const response = await fetch(GROQ_API_URL, {
@@ -2170,11 +2191,33 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     return callGroq({ systemPrompt, userPrompt, maxTokens, temperature }, retryCount + 1);
   }
 
+  // ── 413: request too large for TPM → shrink max_tokens to fit and retry ──
+  if (response.status === 413) {
+    const err = await response.json().catch(() => ({}));
+    const msg = err.error?.message || '';
+    // Groq's message includes the real numbers, e.g. "Limit 12000, Requested 13500".
+    const limitMatch = msg.match(/Limit\s+(\d+)/i);
+    const reqMatch   = msg.match(/Requested\s+~?(\d+)/i);
+
+    if (retryCount < GROQ_LIMITS.maxRetries) {
+      const limit       = limitMatch ? parseInt(limitMatch[1], 10) : GROQ_LIMITS.tpmLimit;
+      const requested   = reqMatch ? parseInt(reqMatch[1], 10) : (maxTokens + estimateTokens(systemPrompt) + estimateTokens(userPrompt));
+      const inputTokens = Math.max(0, requested - maxTokens);
+      const newMaxTokens = Math.max(GROQ_LIMITS.minCompletionTokens, limit - inputTokens - GROQ_LIMITS.tpmSafetyMargin);
+
+      if (newMaxTokens < maxTokens) {
+        setProgress(null, '⏳ Trimming response size to fit Groq\'s per-minute limit — retrying…', '');
+        await new Promise(r => setTimeout(r, 400));
+        return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature }, retryCount + 1);
+      }
+    }
+    throw new Error('Your tech-stack details pushed the request over Groq\'s per-minute token limit. Try shortening the "Other Tools" field (or wait ~1 minute and retry).');
+  }
+
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     const msg = err.error?.message || '';
     if (response.status === 401) throw new Error('Invalid Groq API key. Click "Key ✓" in the header to update it.');
-    if (response.status === 413) throw new Error('Prompt too long. Please shorten your project description.');
     if (response.status === 503) throw new Error('Groq is temporarily unavailable. Please try again in a minute.');
     throw new Error(`Groq API error ${response.status}: ${msg || 'Unknown error.'}`);
   }
@@ -2361,8 +2404,8 @@ async function confirmAndGenerate() {
       }
     }, 2200);
 
-    const stage2 = await callGroq({
-      systemPrompt: `You are a Staff Engineer at a top-tier tech company writing a Product Requirements Document. Your PRDs are read by engineering leads, architects, and developers — they are professional specification documents, NOT code tutorials or code dumps.
+    const prdUserPrompt = buildPRDPrompt(brief);
+    const prdSystemPrompt = `You are a Staff Engineer at a top-tier tech company writing a Product Requirements Document. Your PRDs are read by engineering leads, architects, and developers — they are professional specification documents, NOT code tutorials or code dumps.
 
 WRITING STYLE — THIS IS NON-NEGOTIABLE:
 You write like Stripe, Google, and Airbnb write internal specs. Clear, precise, professional prose and structured tables. You describe WHAT the system does and HOW it behaves — not HOW to implement every line of code.
@@ -2412,9 +2455,12 @@ OUTPUT RULES:
 - Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
 - Every table must have real populated rows — no [example here].
 - Zero placeholders in tables, config values, or deployment commands.
-- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.`,
-      userPrompt: buildPRDPrompt(brief),
-      maxTokens: MAX_TOKENS,
+- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.`;
+
+    const stage2 = await callGroq({
+      systemPrompt: prdSystemPrompt,
+      userPrompt: prdUserPrompt,
+      maxTokens: budgetMaxTokens(prdSystemPrompt, prdUserPrompt, MAX_TOKENS),
       temperature: 0.35
     });
 

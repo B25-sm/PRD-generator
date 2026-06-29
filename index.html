@@ -1873,19 +1873,29 @@ Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Ju
 // ═══════════════════════════════════════════════════════════
 function buildPRDPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const hasRealtime = /websocket|socket\.io|real.?time|chat|live|notification/i.test(
-    (brief.otherTools || '') + brief.coreFeatures.join(' ') + brief.oneLiner
-  );
-  const hasTasks = /celery|queue|background|task|job|email|worker|cron|schedule/i.test(
-    (brief.otherTools || '') + brief.coreFeatures.join(' ')
-  );
-  const hasCache = /redis|cache|memcache/i.test(brief.otherTools || '');
+  // ── Feature detection (PRECISE) ──
+  // Only scan the structured fields (otherTools + coreFeatures), never the free-text
+  // oneLiner. Match genuine signals only — e.g. "email notifications" must NOT pull in
+  // a WebSocket layer, and sending email must NOT force a Celery/Redis task queue.
+  const featureText = (brief.otherTools || '') + ' ' + (brief.coreFeatures || []).join(' ');
+  const hasRealtime = /websocket|socket\.io|\breal[- ]?time\b|\blive (chat|update|feed|stream|tracking|location|score|dashboard)\b|\bchat\b|presence|push notification/i.test(featureText);
+  const hasTasks = /celery|rabbitmq|sidekiq|\bbull\b|message queue|task queue|background (job|task|worker|process)|\bworker\b|\bcron\b|scheduled (job|task)/i.test(featureText);
+  const hasCache = /\bredis\b|memcache|\bcaching\b/i.test(featureText);
   const isJava   = /spring|java|jpa|hibernate/i.test(brief.backend);
   const isPython = /django|fastapi|flask|python/i.test(brief.backend);
 
+  // ── Clean hosting/DB names for the Production Architecture diagram ──
+  const stripParen = s => (s || '').replace(/\([^)]*\)/g, '').trim();
+  const hostParts  = (brief.hosting || '').split('+').map(p => p.trim());
+  const feHost = stripParen(hostParts[0]) || 'Vercel';
+  const beHost = /render/i.test(brief.hosting) ? 'Render'
+               : /railway/i.test(brief.hosting) ? 'Railway'
+               : (stripParen(hostParts[1]) || 'Render');
+  const dbHost = brief.database || 'Managed PostgreSQL';
+
   const extras = [
     hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy. Redis group strategy. NO consumer or hook code.` : '',
-    hasTasks    ? `\n## Background Tasks\nTask table (Task Name | Trigger | Inputs | Action | Retry Policy). Cron schedule table (Task | Cron | Purpose). Config reference (broker URL, result backend, concurrency). NO task function bodies.` : '',
+    hasTasks    ? `\n## Background Tasks\nTask table (Task Name | Trigger | Inputs | Action | Retry Policy). Cron schedule table (Task | Cron | Purpose) — ONLY list genuinely periodic tasks here; event-triggered tasks (e.g. a welcome email on signup) belong in the task table as event-triggered, NEVER in the cron table. Config reference (broker URL, result backend, concurrency). NO task function bodies.` : '',
     hasCache    ? `\n## Caching Strategy\nCache layer table (Layer | Tool | What Cached | TTL | Invalidation Trigger). Config reference (backend, timeout). Per-endpoint cache policy table.` : '',
   ].filter(Boolean).join('\n');
 
@@ -1961,6 +1971,7 @@ src/ file tree — every folder with ← responsibility comment
 ## 6. Database Schema
 \`\`\`sql
 Full CREATE TABLE DDL for every entity: exact types (BIGSERIAL, VARCHAR(255), TEXT, TIMESTAMP WITH TIME ZONE, BOOLEAN), NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
+CRITICAL ORDERING: A table must be created AFTER every table it references with a FOREIGN KEY. Emit independent tables first, then dependent ones (dependency order), so the script runs top-to-bottom without "relation does not exist" errors.
 \`\`\`
 ### Query Patterns
 One sentence per major access pattern: what's fetched, join strategy, why (e.g. select_related vs prefetch_related to avoid N+1).
@@ -2063,9 +2074,9 @@ Separate DB setup, mocked external services, seed data strategy.
 \`\`\`
 ### Production Architecture
 \`\`\`
-Internet → Cloudflare → ${brief.hosting.split('+')[0]?.trim() || 'Vercel'} (frontend static)
-                      → ${brief.hosting.includes('Render') ? 'Render' : 'Railway'} (API server)
-                      → Supabase / MongoDB Atlas (managed DB, free tier)
+Internet → Cloudflare → ${feHost} (frontend static)
+                      → ${beHost} (API server)
+                      → ${dbHost} (managed DB, free tier)
 \`\`\`
 ### CI/CD (GitHub Actions)
 \`\`\`yaml
@@ -2455,7 +2466,10 @@ OUTPUT RULES:
 - Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
 - Every table must have real populated rows — no [example here].
 - Zero placeholders in tables, config values, or deployment commands.
-- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.`;
+- Free hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never DigitalOcean/AWS EC2/Heroku.
+- COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
+- ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
+- SQL: CREATE TABLE statements MUST be ordered so any table referenced by a FOREIGN KEY is defined before the table referencing it.`;
 
     const stage2 = await callGroq({
       systemPrompt: prdSystemPrompt,
@@ -2467,7 +2481,7 @@ OUTPUT RULES:
     clearInterval(progressInterval);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    rawMarkdown = stage2.text;
+    rawMarkdown = fixSqlTableOrder(stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
     const totalTokens = stage2.usage?.total_tokens || 0;
@@ -2534,6 +2548,103 @@ function updateRateWarning(msg) {
   const el = document.getElementById('rate-warning');
   el.style.display = 'block';
   el.textContent = msg;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SQL SAFETY — deterministically reorder CREATE TABLE statements
+//  so a referenced table is always defined before the table that
+//  references it (prevents "relation ... does not exist" on run).
+//  Safe by design: on ANY ambiguity (cycle, interleaved DDL, parse
+//  issue) it returns the original SQL untouched — never corrupts output.
+// ═══════════════════════════════════════════════════════════
+function fixSqlTableOrder(md) {
+  if (!md) return md;
+  return md.replace(/```sql\s*([\s\S]*?)```/gi, (full, body) => {
+    try {
+      const reordered = reorderCreateTables(body);
+      return reordered == null ? full : '```sql\n' + reordered + '\n```';
+    } catch (e) {
+      console.warn('SQL reorder skipped (kept original):', e);
+      return full;
+    }
+  });
+}
+
+function reorderCreateTables(sql) {
+  // Split into statements, preserving each trailing semicolon.
+  const statements = [];
+  let buf = '';
+  for (let i = 0; i < sql.length; i++) {
+    buf += sql[i];
+    if (sql[i] === ';') { statements.push(buf); buf = ''; }
+  }
+  if (buf.trim()) statements.push(buf);
+
+  const seq = statements.map(raw => {
+    const ct = raw.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)["`]?/i);
+    if (ct) {
+      const name = ct[1].toLowerCase();
+      const refs = new Set();
+      const re = /REFERENCES\s+["`]?(\w+)["`]?/gi;
+      let m;
+      while ((m = re.exec(raw)) !== null) {
+        const r = m[1].toLowerCase();
+        if (r !== name) refs.add(r);   // ignore self-references
+      }
+      return { kind: 'table', name, refs, raw };
+    }
+    return {
+      kind: 'other',
+      raw,
+      isIndexLike: /^\s*(CREATE\s+(UNIQUE\s+)?INDEX|COMMENT\s+ON|ALTER\s+TABLE)/i.test(raw)
+    };
+  });
+
+  const tables = seq.filter(s => s.kind === 'table');
+  if (tables.length < 2) return null; // nothing meaningful to reorder
+
+  const firstTableIdx = seq.findIndex(s => s.kind === 'table');
+  const leading = seq.slice(0, firstTableIdx).filter(s => s.kind === 'other'); // e.g. CREATE EXTENSION/TYPE
+  const trailing = seq.slice(firstTableIdx).filter(s => s.kind === 'other');
+  // Bail if a non-index statement is interleaved after the first table (could be a TYPE/EXTENSION
+  // that must precede tables) — safer to leave the whole block as the model wrote it.
+  if (trailing.some(s => !s.isIndexLike)) return null;
+
+  // Kahn topological sort over the dependency graph (referenced table → dependent table).
+  const names = new Set(tables.map(t => t.name));
+  const indeg = new Map(tables.map(t => [t.name, 0]));
+  const adj   = new Map(tables.map(t => [t.name, []]));
+  tables.forEach(t => t.refs.forEach(r => {
+    if (names.has(r)) {                 // ignore external refs (e.g. a users table from auth)
+      adj.get(r).push(t.name);
+      indeg.set(t.name, indeg.get(t.name) + 1);
+    }
+  }));
+
+  const ord    = new Map(tables.map((t, i) => [t.name, i])); // stable tie-break = original order
+  const byName = new Map(tables.map(t => [t.name, t]));
+  const ready  = tables.filter(t => indeg.get(t.name) === 0).map(t => t.name)
+                       .sort((a, b) => ord.get(a) - ord.get(b));
+  const sorted = [];
+  while (ready.length) {
+    const n = ready.shift();
+    sorted.push(byName.get(n));
+    adj.get(n).slice().sort((a, b) => ord.get(a) - ord.get(b)).forEach(x => {
+      indeg.set(x, indeg.get(x) - 1);
+      if (indeg.get(x) === 0) {
+        ready.push(x);
+        ready.sort((a, b) => ord.get(a) - ord.get(b));
+      }
+    });
+  }
+
+  if (sorted.length !== tables.length) return null;            // cycle → bail
+  if (sorted.every((t, i) => t === tables[i])) return null;    // already correct → no change
+
+  return leading.map(s => s.raw.trim())
+    .concat(sorted.map(t => t.raw.trim()))
+    .concat(trailing.map(s => s.raw.trim()))
+    .join('\n\n');
 }
 
 // ═══════════════════════════════════════════════════════════

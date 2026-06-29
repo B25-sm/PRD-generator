@@ -810,6 +810,34 @@ textarea::placeholder { color: var(--text-muted); }
   .domain-pills { grid-template-columns: 1fr; }
 }
 
+/* ─────────── VERIFY BADGE ─────────── */
+.verify-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: help;
+  white-space: nowrap;
+}
+.verify-badge.ok {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.verify-badge.warn {
+  background: rgba(234, 179, 8, 0.12);
+  color: #fcd34d;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+@media (max-width: 600px) {
+  .verify-badge { margin-left: 0; margin-top: 6px; white-space: normal; }
+}
+
 /* ─────────── TECH CONFIRM PANEL ─────────── */
 .tech-grid {
   display: grid;
@@ -1494,6 +1522,7 @@ footer a:hover { color: var(--accent2); }
       <div class="output-title">
         <div class="dot"></div>
         PRD Generated
+        <span class="verify-badge" id="verify-badge" style="display:none;"></span>
       </div>
       <div class="btn-group">
         <button class="btn-tool" onclick="copyMarkdown()">📋 Copy Markdown</button>
@@ -1580,6 +1609,7 @@ const EXAMPLES = [
 //  STATE
 // ═══════════════════════════════════════════════════════════
 let rawMarkdown = '';
+let _lastVerify = null;
 let apiKey = localStorage.getItem(STORAGE_KEY_API) || '';
 
 // ═══════════════════════════════════════════════════════════
@@ -3219,6 +3249,229 @@ function domainSystemExtra(d) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  STAGE 3 — VERIFICATION (cross-check generated PRD vs user inputs)
+//  Two layers:
+//   1. FREE local audit — deterministic regex checks (no tokens).
+//   2. Groq audit — semantic cross-check returning JSON issues.
+//  If CRITICAL issues are found, a single Groq "fix" pass rewrites
+//  only the flagged parts. Degrades gracefully if rate-limited.
+// ═══════════════════════════════════════════════════════════
+
+// 1) FREE local audit — catches the exact stack-mismatch class of bugs
+//    without spending any tokens.
+function localPRDAudit(brief, md) {
+  const issues = [];
+  const text = md || '';
+  const dom = brief.domain || 'web';
+
+  if (dom === 'web') {
+    const stack = inferWebStack(brief);
+    const be = (brief.backend || '').toLowerCase();
+    const db = (brief.database || '').toLowerCase();
+
+    // Wrong-ecosystem signatures that must NOT appear for a given backend
+    const isNode   = /node|express|nest/.test(be);
+    const isPython = /django|flask|fastapi/.test(be);
+    const isJava   = /spring|java|kotlin/.test(be);
+    const isPhp    = /laravel|php/.test(be);
+    const isRuby   = /rails|ruby/.test(be);
+    const isDotnet = /\.net|asp\.net|dotnet|c#/.test(be);
+
+    const foreign = [];
+    if (!isJava)   foreign.push(['Spring Data JPA','Hibernate','pom.xml','application.properties','@Entity','@RestController','Maven']);
+    if (!isPython) foreign.push(['Django ORM','Django REST Framework','manage.py','SQLAlchemy session','DRF']);
+    if (!isPhp)    foreign.push(['Eloquent','Artisan','composer.json']);
+    if (!isRuby)   foreign.push(['ActiveRecord','Gemfile','Rails console']);
+    if (!isDotnet) foreign.push(['Entity Framework','DbContext','.csproj','NuGet']);
+    // Node-only signatures shouldn't appear in non-Node stacks
+    if (!isNode)   foreign.push(['package.json','npm install','Prisma schema']);
+
+    const flat = [].concat(...foreign);
+    flat.forEach(sig => {
+      const re = new RegExp('(^|[^a-z0-9])' + sig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)', 'i');
+      if (re.test(text)) {
+        issues.push({
+          severity: 'critical',
+          where: 'Tech Stack / Backend',
+          problem: `Mentions "${sig}", which does not belong to the chosen backend (${brief.backend}).`,
+          fix: `Replace ${sig} with the correct ${brief.backend} equivalent (ORM should be ${stack.orm}, language ${stack.lang}).`
+        });
+      }
+    });
+
+    // Mongo + relational SQL DDL mismatch
+    if (/mongo/i.test(db) && /CREATE TABLE/i.test(text)) {
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Database is MongoDB but the schema uses SQL CREATE TABLE statements.', fix: 'Use MongoDB collection/document schema (Mongoose models), not SQL DDL.' });
+    }
+  }
+
+  // Every explicitly named tool must be mentioned somewhere
+  const tools = (brief.otherTools || '').split(/[,+/]| and /i).map(t => t.replace(/\([^)]*\)/g, '').trim()).filter(t => t && t.toLowerCase() !== 'none' && t.length > 1);
+  tools.forEach(tool => {
+    const re = new RegExp(tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    if (!re.test(text)) {
+      issues.push({ severity: 'critical', where: 'Tools coverage', problem: `Tool "${tool}" was specified but never appears in the PRD.`, fix: `Add ${tool} to the relevant sections (tech stack, API/schema, env vars as applicable).` });
+    }
+  });
+
+  // De-dupe
+  const seen = new Set();
+  return issues.filter(i => { const k = i.where + '|' + i.problem; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+// 2) Groq semantic audit — returns { verdict, issues:[{severity,where,problem,fix}] }
+function buildAuditPrompt(brief, md) {
+  const dom = getDomain(brief.domain || 'web');
+  const stackLines = dom.stackFields.map(f => `- ${f.label}: ${brief[f.key] || '(not set)'}`).join('\n');
+  return `You are a meticulous PRD QA auditor. Cross-check the GENERATED PRD against the USER'S CHOSEN INPUTS and report ONLY concrete, objective violations. Be conservative — do NOT invent issues or nitpick style. If the document is faithful to the inputs, return an empty issues array.
+
+USER INPUTS (source of truth):
+Project: ${brief.projectName}
+Domain: ${dom.label}
+${stackLines}
+Tools: ${brief.otherTools || 'None'}
+
+CHECK FOR THESE VIOLATIONS ONLY:
+1. STACK MISMATCH: any technology, ORM, language, framework or concept that contradicts the chosen stack (e.g. Hibernate/Spring/JPA in a Node project; Django ORM in a Java project; SQL tables when DB is MongoDB).
+2. WRONG LAYER: a technology placed in the wrong layer (e.g. an HTTP client like Axios listed under Backend; an ORM under Frontend; a state library like Redux listed as Auth).
+3. DROPPED TOOL: a tool the user specified that is missing from the PRD.
+4. INVENTED TECH: a major technology presented as part of the stack that the user never specified or implied.
+5. DOMAIN MISMATCH: sections that don't fit the domain (e.g. a REST CRUD spec inside a Data Science PRD).
+6. SQL ORDER: a CREATE TABLE referencing another table via FOREIGN KEY before that table is defined.
+
+GENERATED PRD:
+"""
+${md}
+"""
+
+Respond with ONLY raw JSON (no markdown, no code fences):
+{ "verdict": "pass" | "fail", "issues": [ { "severity": "critical" | "minor", "where": "section name", "problem": "what is wrong", "fix": "the precise correction" } ] }
+"verdict" is "fail" if there is at least one "critical" issue, otherwise "pass".`;
+}
+
+function buildFixPrompt(brief, md, issues) {
+  const dom = getDomain(brief.domain || 'web');
+  const stackLines = dom.stackFields.map(f => `- ${f.label}: ${brief[f.key] || '(not set)'}`).join('\n');
+  const issueLines = issues.map((i, n) => `${n + 1}. [${i.severity}] (${i.where}) ${i.problem} → FIX: ${i.fix}`).join('\n');
+  return `Below is a PRD that has SPECIFIC verified errors. Output a corrected version that fixes EVERY listed issue and changes NOTHING else. Keep the exact same Markdown structure, headings, ordering, and all correct content. Do not add commentary.
+
+USER INPUTS (source of truth):
+Project: ${brief.projectName}
+Domain: ${dom.label}
+${stackLines}
+Tools: ${brief.otherTools || 'None'}
+
+ISSUES TO FIX:
+${issueLines}
+
+ORIGINAL PRD:
+"""
+${md}
+"""
+
+Output ONLY the corrected full PRD in Markdown. No preamble, no closing remarks, no code fences around the whole document.`;
+}
+
+function parseAuditJSON(text) {
+  try {
+    let t = (text || '').replace(/```json|```/gi, '').trim();
+    const s = t.indexOf('{'); const e = t.lastIndexOf('}');
+    if (s >= 0 && e > s) t = t.slice(s, e + 1);
+    const obj = JSON.parse(t);
+    if (!Array.isArray(obj.issues)) obj.issues = [];
+    return obj;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Orchestrates local + Groq audit and (if needed) one fix pass.
+// Returns { markdown, tokens, status, issues, fixedCount }.
+async function verifyAndFixPRD(brief, md) {
+  let tokens = 0;
+  let issues = localPRDAudit(brief, md);     // free
+  let status = 'verified';
+  let fixedCount = 0;
+
+  // Groq semantic audit (best-effort)
+  try {
+    setProgress(94, '🔎 Cross-checking against your inputs…', '');
+    const auditSys = 'You are a strict, precise QA auditor. You output only valid raw JSON. You never fabricate issues.';
+    const auditUser = buildAuditPrompt(brief, md);
+    const audit = await callGroq({
+      systemPrompt: auditSys,
+      userPrompt: auditUser,
+      maxTokens: budgetMaxTokens(auditSys, auditUser, 1500),
+      temperature: 0.0
+    });
+    tokens += audit.usage?.total_tokens || 0;
+    const parsed = parseAuditJSON(audit.text);
+    if (parsed && parsed.issues.length) {
+      // merge, prefer critical
+      issues = issues.concat(parsed.issues.filter(i => i && i.problem));
+    }
+  } catch (e) {
+    console.warn('Groq audit skipped:', e);
+    // If we have no local issues and the audit failed, we can't fully verify.
+    if (issues.length === 0) status = 'unverified';
+  }
+
+  const critical = issues.filter(i => (i.severity || 'critical') === 'critical');
+
+  // One fix pass if there are critical issues
+  if (critical.length) {
+    status = 'corrected';
+    try {
+      setProgress(97, `🛠 Fixing ${critical.length} issue${critical.length > 1 ? 's' : ''} found…`, '');
+      const fixSys = 'You are a precise editor. You fix only the listed issues and preserve everything else exactly. Output only Markdown.';
+      const fixUser = buildFixPrompt(brief, md, critical);
+      const fix = await callGroq({
+        systemPrompt: fixSys,
+        userPrompt: fixUser,
+        maxTokens: budgetMaxTokens(fixSys, fixUser, MAX_TOKENS),
+        temperature: 0.15
+      });
+      tokens += fix.usage?.total_tokens || 0;
+      if (fix.text && fix.text.trim().length > md.length * 0.5) {
+        md = fixSqlTableOrder(fix.text.trim());
+        fixedCount = critical.length;
+        // Re-run the free local audit to confirm the fix actually resolved them
+        const remaining = localPRDAudit(brief, md).filter(i => (i.severity || 'critical') === 'critical');
+        status = remaining.length ? 'partial' : 'corrected';
+        issues = remaining.length ? remaining : [];
+      } else {
+        status = 'flagged'; // fix produced nothing usable; keep original + warn
+      }
+    } catch (e) {
+      console.warn('Groq fix pass failed:', e);
+      status = 'flagged';
+    }
+  }
+
+  return { markdown: md, tokens, status, issues, fixedCount };
+}
+
+// Build the verification badge shown in the output toolbar.
+function setVerifyBadge(result) {
+  const el = document.getElementById('verify-badge');
+  if (!el) return;
+  const map = {
+    verified:   { cls: 'ok',   txt: '✓ Cross-checked — matches your inputs' },
+    corrected:  { cls: 'ok',   txt: `✓ Cross-checked & auto-corrected ${result.fixedCount} issue${result.fixedCount > 1 ? 's' : ''}` },
+    partial:    { cls: 'warn', txt: `⚠ Cross-checked — ${result.issues.length} issue${result.issues.length > 1 ? 's' : ''} could not be fully auto-fixed` },
+    flagged:    { cls: 'warn', txt: `⚠ Cross-check found ${result.issues.length} issue${result.issues.length > 1 ? 's' : ''} — review highlighted points` },
+    unverified: { cls: 'warn', txt: '⚠ Could not cross-check (rate limit) — please review' }
+  };
+  const m = map[result.status] || map.unverified;
+  el.className = 'verify-badge ' + m.cls;
+  el.textContent = m.txt;
+  el.title = (result.issues && result.issues.length)
+    ? result.issues.map(i => `• [${i.severity || 'critical'}] ${i.where}: ${i.problem}`).join('\n')
+    : 'No discrepancies found between your inputs and the generated PRD.';
+  el.style.display = 'inline-flex';
+}
+
+// ═══════════════════════════════════════════════════════════
 //  CONFIRM & GENERATE — Stage 2 (user confirmed stack → full PRD)
 // ═══════════════════════════════════════════════════════════
 async function confirmAndGenerate() {
@@ -3246,7 +3499,10 @@ async function confirmAndGenerate() {
   document.getElementById('gen-btn').disabled = true;
   document.getElementById('output-area').style.display = 'none';
   document.getElementById('error-msg').style.display = 'none';
+  const vb = document.getElementById('verify-badge');
+  if (vb) vb.style.display = 'none';
   rawMarkdown = '';
+  _lastVerify = null;
 
   const startTime = Date.now();
 
@@ -3346,12 +3602,17 @@ OUTPUT RULES:
     rawMarkdown = fixSqlTableOrder(stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
-    const totalTokens = stage2.usage?.total_tokens || 0;
+    // ── STAGE 3: cross-check the PRD against the user's inputs ──
+    const verify = await verifyAndFixPRD(brief, rawMarkdown);
+    rawMarkdown = verify.markdown;
+    _lastVerify = verify;
+
+    const totalTokens = (stage2.usage?.total_tokens || 0) + (verify.tokens || 0);
     recordRequest(totalTokens);
     addHistoryEntry(brief.projectName, totalTokens);
     refreshRateBadge();
 
-    setProgress(100, `✓ PRD complete in ${elapsed}s`, `${totalTokens.toLocaleString()} tokens`);
+    setProgress(100, `✓ PRD verified & complete in ${elapsed}s`, `${totalTokens.toLocaleString()} tokens`);
 
     // Show cooldown warning — user needs to wait before next PRD
     const secsCooldown = GROQ_LIMITS.minSecsBetweenPRDs;
@@ -3361,6 +3622,7 @@ OUTPUT RULES:
       document.getElementById('progress-area').style.display = 'none';
       document.getElementById('brief-card').style.display = 'none';
       renderPRD(rawMarkdown);
+      setVerifyBadge(verify);
     }, 700);
 
   } catch (err) {

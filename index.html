@@ -3304,14 +3304,17 @@ function localPRDAudit(brief, md) {
     const isRuby   = /rails|ruby/.test(be);
     const isDotnet = /\.net|asp\.net|dotnet|c#/.test(be);
 
+    // Only flag BACKEND-specific cross-contamination. NEVER flag tooling shared
+    // with the JS frontend (package.json, npm, vite, etc.) — every web app has a
+    // JavaScript frontend regardless of backend, so those always appear legitimately.
     const foreign = [];
-    if (!isJava)   foreign.push(['Spring Data JPA','Hibernate','pom.xml','application.properties','@Entity','@RestController','Maven']);
-    if (!isPython) foreign.push(['Django ORM','Django REST Framework','manage.py','SQLAlchemy session','DRF']);
+    if (!isJava)   foreign.push(['Spring Data JPA','Spring Boot','Hibernate','pom.xml','application.properties','@Entity','@RestController','@Autowired','Maven']);
+    if (!isPython) foreign.push(['Django ORM','Django REST Framework','manage.py','SQLAlchemy','DRF']);
     if (!isPhp)    foreign.push(['Eloquent','Artisan','composer.json']);
     if (!isRuby)   foreign.push(['ActiveRecord','Gemfile','Rails console']);
     if (!isDotnet) foreign.push(['Entity Framework','DbContext','.csproj','NuGet']);
-    // Node-only signatures shouldn't appear in non-Node stacks
-    if (!isNode)   foreign.push(['package.json','npm install','Prisma schema']);
+    // Node BACKEND-only markers (NOT package.json/npm — those are frontend tooling)
+    if (!isNode)   foreign.push(['Mongoose','Sequelize','Express.js']);
 
     const flat = [].concat(...foreign);
     flat.forEach(sig => {

@@ -805,6 +805,20 @@ textarea::placeholder { color: var(--text-muted); }
 
 .tech-input::placeholder { color: var(--text-muted); }
 
+.tech-input.invalid {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.tech-error {
+  display: none;
+  font-size: 0.7rem;
+  color: #fca5a5;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+.tech-error.show { display: block; }
+
 .btn-confirm-generate {
   width: 100%;
   padding: 14px;
@@ -1379,23 +1393,28 @@ footer a:hover { color: var(--accent2); }
       <div class="tech-grid">
         <div class="tech-field">
           <label class="tech-label">Frontend</label>
-          <input class="tech-input" id="tc-frontend" placeholder="e.g. React 18, Next.js, Thymeleaf" />
+          <input class="tech-input" id="tc-frontend" data-cat="frontend" oninput="validateTechField('tc-frontend')" placeholder="e.g. React 18, Next.js, Thymeleaf" />
+          <div class="tech-error" id="tc-frontend-err"></div>
         </div>
         <div class="tech-field">
           <label class="tech-label">Backend</label>
-          <input class="tech-input" id="tc-backend" placeholder="e.g. Spring Boot, Node.js + Express" />
+          <input class="tech-input" id="tc-backend" data-cat="backend" oninput="validateTechField('tc-backend')" placeholder="e.g. Spring Boot, Node.js + Express" />
+          <div class="tech-error" id="tc-backend-err"></div>
         </div>
         <div class="tech-field">
           <label class="tech-label">Database</label>
-          <input class="tech-input" id="tc-database" placeholder="e.g. PostgreSQL, MySQL, MongoDB" />
+          <input class="tech-input" id="tc-database" data-cat="database" oninput="validateTechField('tc-database')" placeholder="e.g. PostgreSQL, MySQL, MongoDB" />
+          <div class="tech-error" id="tc-database-err"></div>
         </div>
         <div class="tech-field">
           <label class="tech-label">Auth</label>
-          <input class="tech-input" id="tc-auth" placeholder="e.g. JWT, OAuth2, Firebase Auth" />
+          <input class="tech-input" id="tc-auth" data-cat="auth" oninput="validateTechField('tc-auth')" placeholder="e.g. JWT, OAuth2, Firebase Auth" />
+          <div class="tech-error" id="tc-auth-err"></div>
         </div>
         <div class="tech-field">
           <label class="tech-label">Hosting</label>
-          <input class="tech-input" id="tc-hosting" placeholder="e.g. Vercel + Render (free) · Vercel + Railway · Cloudflare Pages + Render" />
+          <input class="tech-input" id="tc-hosting" data-cat="hosting" oninput="validateTechField('tc-hosting')" placeholder="e.g. Vercel + Render (free) · Vercel + Railway · Cloudflare Pages + Render" />
+          <div class="tech-error" id="tc-hosting-err"></div>
         </div>
         <div class="tech-field">
           <label class="tech-label">Other Tools</label>
@@ -2239,6 +2258,87 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
 }
 
 // ═══════════════════════════════════════════════════════════
+//  TECH-STACK FIELD VALIDATION
+//  Stops a value that clearly belongs to a different category
+//  (e.g. typing the host "Render" into the Database box).
+//  Known multi-purpose tools (Supabase, Firebase, Railway…) are
+//  listed under every category they legitimately fit, so they pass.
+//  Unrecognized free text is allowed — we only block CONFIDENT mismatches.
+// ═══════════════════════════════════════════════════════════
+const TECH_SETS = {
+  frontend: ['react','vue','angular','svelte','sveltekit','next.js','nextjs','next','nuxt','solid','solidjs','qwik','astro','remix','thymeleaf','blazor','jquery','ember','backbone','preact','lit','htmx','material-ui','mui','tailwind','bootstrap','chakra','vuetify','antd','ant design'],
+  backend: ['spring','spring boot','django','flask','fastapi','express','express.js','nestjs','nest','node','node.js','laravel','symfony','rails','ruby on rails','.net','asp.net','dotnet','gin','fiber','echo','phoenix','koa','hapi','adonis','strapi','ktor','micronaut','quarkus'],
+  database: ['postgres','postgresql','postgre','mysql','mariadb','mongodb','mongo','sqlite','sql server','mssql','oracle','dynamodb','firestore','firebase','cassandra','couchdb','couchbase','neo4j','cockroachdb','planetscale','supabase','redis','snowflake','bigquery','elasticsearch','influxdb','timescaledb'],
+  auth: ['jwt','oauth','oauth2','passport','passport.js','auth0','clerk','cognito','firebase','firebase auth','keycloak','okta','session','sessions','spring security','devise','lucia','supertokens','nextauth','next-auth','magic link'],
+  hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase']
+};
+
+const CAT_LABEL = { frontend: 'Frontend', backend: 'Backend', database: 'Database', auth: 'Auth', hosting: 'Hosting' };
+
+function tokenInValue(token, value) {
+  const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Word-ish boundaries so "next" doesn't match "context", etc.
+  return new RegExp('(^|[^a-z0-9])' + esc + '([^a-z0-9]|$)', 'i').test(value);
+}
+
+function classifyTechValue(value) {
+  const cats = new Set();
+  for (const [cat, terms] of Object.entries(TECH_SETS)) {
+    if (terms.some(t => tokenInValue(t, value))) cats.add(cat);
+  }
+  return cats;
+}
+
+// Returns an error message string if the field's value clearly belongs to other
+// categories only, otherwise '' (valid / unknown / empty).
+function techFieldError(fieldCat, value) {
+  const v = (value || '').trim();
+  if (!v) return '';
+  const cats = classifyTechValue(v);
+  if (cats.size === 0) return '';        // unrecognized free text → allow
+  if (cats.has(fieldCat)) return '';     // contains a valid term for this field → OK
+  const others = [...cats].map(c => CAT_LABEL[c]).join(' / ');
+  return `“${v}” looks like ${others}, not ${CAT_LABEL[fieldCat]}. Enter a real ${CAT_LABEL[fieldCat].toLowerCase()} (e.g. ${exampleFor(fieldCat)}).`;
+}
+
+function exampleFor(cat) {
+  return {
+    frontend: 'React, Vue, Angular',
+    backend: 'Spring Boot, Django, Express',
+    database: 'PostgreSQL, MySQL, MongoDB',
+    auth: 'JWT, OAuth2, Firebase Auth',
+    hosting: 'Vercel, Render, Railway'
+  }[cat] || '';
+}
+
+// Validate one field, update its UI, return true if valid.
+function validateTechField(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return true;
+  const cat = input.getAttribute('data-cat');
+  const errEl = document.getElementById(inputId + '-err');
+  const msg = techFieldError(cat, input.value);
+  if (msg) {
+    input.classList.add('invalid');
+    if (errEl) { errEl.textContent = '⚠ ' + msg; errEl.classList.add('show'); }
+    return false;
+  }
+  input.classList.remove('invalid');
+  if (errEl) { errEl.textContent = ''; errEl.classList.remove('show'); }
+  return true;
+}
+
+// Validate every category field; returns the first invalid input id, or null if all OK.
+function validateAllTechFields() {
+  const ids = ['tc-frontend', 'tc-backend', 'tc-database', 'tc-auth', 'tc-hosting'];
+  let firstInvalid = null;
+  ids.forEach(id => {
+    if (!validateTechField(id) && !firstInvalid) firstInvalid = id;
+  });
+  return firstInvalid;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  RENDER EXPANDED BRIEF CARD
 // ═══════════════════════════════════════════════════════════
 function renderBriefCard(brief) {
@@ -2277,6 +2377,9 @@ function renderBriefCard(brief) {
   document.getElementById('tc-auth').value     = brief.auth     || '';
   document.getElementById('tc-hosting').value  = brief.hosting  || '';
   document.getElementById('tc-other').value    = (brief.otherTools && brief.otherTools !== 'None') ? brief.otherTools : '';
+
+  // Reset any stale validation state, then validate the freshly inferred values.
+  ['tc-frontend','tc-backend','tc-database','tc-auth','tc-hosting'].forEach(validateTechField);
 
   card.style.display = 'block';
 
@@ -2369,6 +2472,16 @@ async function generatePRD() {
 // ═══════════════════════════════════════════════════════════
 async function confirmAndGenerate() {
   if (!_currentBrief) return;
+
+  // ── Validate edited tech-stack fields before doing anything ──
+  const firstInvalid = validateAllTechFields();
+  if (firstInvalid) {
+    const el = document.getElementById(firstInvalid);
+    el.focus();
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showError('⚠️ Please fix the highlighted tech-stack field(s) before generating — a value there belongs to a different category.');
+    return;
+  }
 
   // Merge any user edits back into the brief
   const brief = {

@@ -837,6 +837,19 @@ textarea::placeholder { color: var(--text-muted); }
   .domain-pills { grid-template-columns: 1fr; }
 }
 
+.stack-fix-notice {
+  margin: 12px 22px 0;
+  padding: 10px 14px;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  border-radius: 10px;
+  font-size: 0.76rem;
+  color: #fcd34d;
+  line-height: 1.5;
+}
+.stack-fix-notice ul { margin: 6px 0 0 18px; padding: 0; }
+.stack-fix-notice li { margin-bottom: 3px; }
+
 /* ─────────── VERIFY BADGE ─────────── */
 .verify-badge {
   display: inline-flex;
@@ -1971,7 +1984,13 @@ const DOMAINS = {
       { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)'", placeholder: 'e.g. Vercel + Render + Supabase' },
       { key: 'otherTools', label: 'Other Tools', cat: null,       desc: 'Other tools like Redis, Stripe, SendGrid, Cloudinary (or "None")', placeholder: 'e.g. Stripe, Redis, Cloudinary' }
     ],
-    expandHint: 'Infer a sensible web stack. Always recommend FREE hosting (Vercel, Render, Railway, Supabase, Cloudflare Pages) — never paid defaults like AWS EC2/DigitalOcean/Heroku.',
+    expandHint: `Infer a sensible, INTERNALLY CONSISTENT web stack. CRITICAL STACK RULES:
+- Auth MUST match backend runtime: Spring Boot → "JWT + Spring Security"; Node/Express → "JWT + Passport.js"; Django → "JWT + Django REST Framework auth"; Next.js + Node backend → "NextAuth.js + JWT" (NextAuth is frontend-only, backend still issues JWT).
+- NEVER pair NextAuth or Passport.js with a Spring Boot or Django backend.
+- ORM must match backend: Spring → JPA/Hibernate; Node → Prisma; Django → Django ORM.
+- For e-commerce/marketplace/food-delivery apps, include Stripe in otherTools if payments needed, SendGrid for emails, Cloudinary for images.
+- coreFeatures must be concrete user-facing capabilities (not generic "CRUD").
+Always recommend FREE hosting (Vercel, Render, Railway, Supabase, Cloudflare Pages).`,
     progressSteps: [[16,'Designing system architecture…'],[30,'Writing database schema…'],[45,'Defining API endpoints…'],[58,'Building feature breakdown…'],[70,'Writing auth & security…'],[82,'Writing deployment guide…'],[93,'Finalizing all sections…']],
     build: (b) => buildWebPrompt(b)
   },
@@ -2188,6 +2207,58 @@ function inferWebStack(brief) {
   };
 }
 
+// Auto-correct a brief so auth/runtime/stack fields are internally consistent
+// BEFORE the PRD is ever generated. Returns { brief, fixes: string[] }.
+function enforceStackConsistency(brief) {
+  const fixes = [];
+  const b = { ...brief };
+  const be = (b.backend || '').toLowerCase();
+  const fe = (b.frontend || '').toLowerCase();
+  const auth = (b.auth || '').toLowerCase();
+  const isJava   = /spring|java|kotlin/.test(be);
+  const isNode   = /node|express|nest/.test(be);
+  const isPython = /django|flask|fastapi/.test(be);
+  const isRuby   = /rails|ruby/.test(be);
+  const isNext   = /next\.js|nextjs|\bnext\b/.test(fe);
+
+  const setAuth = (val, reason) => {
+    if (b.auth !== val) { fixes.push(`Auth: "${b.auth || '(empty)'}" → "${val}" (${reason})`); b.auth = val; }
+  };
+
+  // Auth must match backend runtime — never NextAuth/Passport on Spring/Django
+  if (isJava && /nextauth|next-auth|passport|auth\.js/.test(auth))
+    setAuth('JWT + Spring Security', 'NextAuth/Passport cannot run on Spring Boot');
+  else if (isJava && !/spring security|jwt|oauth|auth0|firebase|clerk|okta|cognito|keycloak/.test(auth))
+    setAuth('JWT + Spring Security', 'Spring Boot requires Spring Security');
+
+  if (isPython && /nextauth|passport|spring security/.test(auth))
+    setAuth('JWT + Django REST Framework auth', 'Node/Java auth libs cannot run on Django');
+  else if (isPython && !/django|jwt|oauth|auth0|firebase|session/.test(auth))
+    setAuth('JWT + Django REST Framework auth', 'Django default');
+
+  if (isRuby && /nextauth|passport|spring security/.test(auth))
+    setAuth('JWT + Devise', 'wrong runtime');
+  else if (isRuby && !/devise|jwt|oauth/.test(auth))
+    setAuth('JWT + Devise', 'Rails default');
+
+  if (isNode && /spring security|devise|django/.test(auth))
+    setAuth(isNext ? 'NextAuth.js + JWT' : 'JWT + Passport.js', 'Java/Rails/Python auth cannot run on Node');
+  else if (isNode && !/jwt|oauth|passport|nextauth|next-auth|auth0|firebase|clerk|session/.test(auth))
+    setAuth(isNext ? 'NextAuth.js + JWT' : 'JWT + Passport.js', 'Node default');
+
+  // Hosting DB name should match database field (not invent Supabase when user said PostgreSQL)
+  const db = (b.database || '').toLowerCase();
+  const host = (b.hosting || '').toLowerCase();
+  if (/postgres|mysql|mariadb/.test(db) && !/supabase/.test(db) && /supabase/.test(host)) {
+    const newHost = b.hosting.replace(/supabase[^+]*/gi, b.database.split(' ')[0]).replace(/\(\s*db\s*\)/gi, '(DB)').replace(/\+\s*\+/g, '+').trim();
+    fixes.push(`Hosting: removed Supabase — using "${b.database}" as stated`);
+    b.hosting = newHost;
+  }
+
+  b._stackFixes = fixes;
+  return { brief: b, fixes };
+}
+
 function buildWebPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const stack = inferWebStack(brief);
@@ -2210,6 +2281,12 @@ function buildWebPrompt(brief) {
                : /railway/i.test(brief.hosting) ? 'Railway'
                : (stripParen(hostParts[1]) || 'Render');
   const dbHost = brief.database || 'Managed PostgreSQL';
+
+  const isNext = /next\.js|nextjs|\bnext\b/i.test(brief.frontend || '');
+  const featAll  = ((brief.coreFeatures || []).join(' ') + ' ' + brief.projectName + ' ' + (brief.oneLiner || '')).toLowerCase();
+  const isFood   = /food|restaurant|menu|delivery|meal|order hub/.test(featAll);
+  const isEcom   = /e-?commerce|marketplace|shop|cart|checkout|product|store/.test(featAll);
+  const hasStripe = /stripe/i.test(brief.otherTools || '');
 
   const extras = [
     hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy. Redis group strategy. NO consumer or hook code.` : '',
@@ -2235,6 +2312,16 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - REST/API layer: ${stack.rest}
 - Frontend is ${brief.frontend}; backend is ${brief.backend}. Do NOT mix Spring/Java concepts into a Node stack or vice versa.
 - Every Tech Stack table row, architecture section, folder tree, and security note MUST reflect this stack only.
+- Auth (backend table + Section 8): "${brief.auth}" exactly — NEVER list NextAuth/Passport in the backend table for Spring Boot; NextAuth is frontend-only on Next.js.
+- Architecture: MONOLITH — one ${stack.framework} API + separate ${brief.frontend} frontend deployed independently. Do NOT describe as "microservices" unless the user explicitly requested microservices.
+- Production Architecture diagram database MUST be "${dbHost}" — do not substitute Supabase/other unless the database field says so.
+- "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
+- State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
+${isNext ? `- Next.js frontend rules: App Router (NOT React Router); built-in bundler (NOT standalone Webpack/Vite); env vars use NEXT_PUBLIC_* (NEVER VITE_*); dev port 3000 (NOT 5173).` : ''}
+${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status.` : ''}
+${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
+${/cloudinary/i.test(brief.otherTools || '') ? `- Cloudinary MUST appear in: image URL columns in schema, upload endpoint, CLOUDINARY_* env vars.` : ''}
+${/sendgrid/i.test(brief.otherTools || '') ? `- SendGrid MUST appear in: email row in backend table, SENDGRID_API_KEY env var, order-confirmation email in business rules.` : ''}
 
 Write a professional PRD in Markdown. Specification prose + tables only. No code implementations. No function bodies.
 
@@ -2260,7 +2347,7 @@ Out-of-scope items with one-line reason each.
 (containerization, CI/CD, backend host, frontend host, proxy, monitoring)
 
 ## 3. System Architecture
-Architecture pattern + 2-sentence rationale.
+Monolith architecture: single ${stack.framework} backend API + ${brief.frontend} frontend (separate deployment, NOT microservices). 2-sentence rationale.
 \`\`\`
 ASCII component diagram: Browser → Proxy → API → DB${hasCache ? ' ↔ Cache' : ''}${hasTasks ? ' + Workers' : ''}${hasRealtime ? ' + WS' : ''}
 \`\`\`
@@ -3145,6 +3232,11 @@ function renderBriefCard(brief) {
         <span class="brief-label">Core Features</span>
         <span class="brief-value">${tags(brief.coreFeatures)}</span>
       </div>
+      ${(brief._stackFixes && brief._stackFixes.length) ? `
+      <div class="stack-fix-notice">
+        <strong>🔧 Auto-corrected for stack consistency:</strong>
+        <ul>${brief._stackFixes.map(f => `<li>${f}</li>`).join('')}</ul>
+      </div>` : ''}
     </div>
   `;
 
@@ -3222,7 +3314,7 @@ async function generatePRD() {
     setProgress(5, 'Understanding your idea…', '');
 
     const stage1 = await callGroq({
-      systemPrompt: 'You are an expert software product analyst. Your job is to intelligently expand any vague project idea — even a single word or typo-filled phrase — into a complete, specific project brief. Always respond with valid raw JSON only. No markdown fences, no explanation.',
+      systemPrompt: 'You are an expert software product analyst. Expand project ideas into complete briefs with INTERNALLY CONSISTENT tech stacks — auth must match backend runtime (Spring Boot → JWT + Spring Security, never NextAuth on Spring). Always respond with valid raw JSON only. No markdown fences, no explanation.',
       userPrompt: buildExpandPrompt(idea),
       maxTokens: 700,
       temperature: 0.25
@@ -3240,6 +3332,8 @@ async function generatePRD() {
     }
 
     brief.domain = currentDomainId;
+    const enforced = enforceStackConsistency(brief);
+    brief = enforced.brief;
     _currentBrief = brief;
 
     // Show brief + tech confirm panel — user decides when to proceed
@@ -3349,6 +3443,47 @@ function localPRDAudit(brief, md) {
     if (/supertokens/.test(authStr) && !isNode && !isNext && !isPython) flagAuth('SuperTokens (Node/Python SDK)');
     if (/spring security/.test(authStr) && !isJava)                  flagAuth('Spring Security (Java/Spring-only)');
     if (/\bdevise\b/.test(authStr) && !isRuby)                        flagAuth('Devise (Ruby on Rails-only)');
+
+    // ── PRD content checks (catch errors IN the generated document) ──
+    const featAll = ((brief.coreFeatures || []).join(' ') + ' ' + brief.projectName + ' ' + (brief.oneLiner || '')).toLowerCase();
+    const isFood  = /food|restaurant|menu|delivery|meal|order hub/.test(featAll);
+    const isEcom  = /e-?commerce|marketplace|shop|cart|checkout|product|store/.test(featAll);
+
+    if (isJava && /\|\s*Authentication\s*\|[^|\n]*NextAuth/i.test(text))
+      issues.push({ severity: 'critical', where: 'Tech Stack / Backend', problem: 'Backend Authentication row lists NextAuth but backend is Spring Boot.', fix: 'Replace with Spring Security + JWT in the backend table; NextAuth is frontend-only.' });
+
+    if (/next\.js|nextjs/.test(feStr) && /\bReact Router\b/i.test(text))
+      issues.push({ severity: 'critical', where: 'Frontend Architecture', problem: 'Next.js uses App Router — React Router does not apply.', fix: 'Replace all React Router references with Next.js App Router (file-based routing).' });
+
+    if (/next\.js|nextjs/.test(feStr) && /\bVITE_/i.test(text))
+      issues.push({ severity: 'critical', where: 'Environment Variables', problem: 'Next.js uses NEXT_PUBLIC_* env vars, not VITE_*.', fix: 'Replace VITE_API_URL with NEXT_PUBLIC_API_URL; remove Vite-specific config.' });
+
+    if (/next\.js|nextjs/.test(feStr) && /\b5173\b/.test(text) && !/5173.*note/i.test(text))
+      issues.push({ severity: 'minor', where: 'Deployment', problem: 'Port 5173 is Vite default; Next.js dev server runs on 3000.', fix: 'Use port 3000 for Next.js frontend in docker-compose and deployment.' });
+
+    if (/microservices?\s+architect|utilize a microservices|microservice-based/i.test(text))
+      issues.push({ severity: 'critical', where: 'System Architecture', problem: 'Describes microservices but stack is a single monolith backend + frontend.', fix: 'Describe as monolith: one API service + separate frontend deployment.' });
+
+    if (/postgres/i.test(db) && !/supabase/.test(db) && /\bsupabase\b/i.test(text))
+      issues.push({ severity: 'critical', where: 'Production Architecture', problem: `Diagram/text mentions Supabase but database is "${brief.database}".`, fix: `Use "${brief.database}" consistently in all architecture references.` });
+
+    if (/\|\s*State\s*\|[^|\n]*Context/i.test(text) && /State Architecture[\s\S]{0,1200}\|\s*Authentication\s*\|\s*Redux/i.test(text))
+      issues.push({ severity: 'critical', where: 'State Management', problem: 'Frontend table lists React Context API but State Architecture uses Redux — contradictory.', fix: 'Pick ONE state library and use it consistently in Sections 2, 5, 8, and 9.' });
+
+    if (/stripe/i.test(brief.otherTools || '') && !/\|\s*POST\s*\|[^|]*\/(payments|checkout|stripe)/i.test(text))
+      issues.push({ severity: 'critical', where: 'API Specification', problem: 'Stripe is in tools but no payment/checkout API endpoint exists.', fix: 'Add POST /payments/checkout, Stripe webhook endpoint, and payments table.' });
+
+    if ((isFood || isEcom) && /CREATE TABLE/i.test(text)) {
+      if (!/menu_items|menu item|products/i.test(text))
+        issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Food/e-commerce app missing menu_items or products table.', fix: 'Add menu_items/products table linked to restaurants with price and description.' });
+      if (/CREATE TABLE\s+orders/i.test(text) && !/order_items|order_item/i.test(text))
+        issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Orders table exists but no order_items line-items table.', fix: 'Add order_items with order_id, item_id, quantity, unit_price.' });
+      if (/CREATE TABLE\s+orders/i.test(text) && !/status/i.test(text.split(/CREATE TABLE orders/i)[1]?.split(/CREATE TABLE/i)[0] || ''))
+        issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Orders table missing status column for order tracking.', fix: 'Add status VARCHAR with values pending/confirmed/preparing/delivered/cancelled.' });
+    }
+
+    if (/easy to use and highly configurable/i.test(text))
+      issues.push({ severity: 'minor', where: 'Tech Stack Overview', problem: 'Generic filler text "Easy to use and highly configurable" repeated in Why Chosen column.', fix: 'Replace each Why Chosen with a specific, project-relevant reason.' });
   }
 
   // Every explicitly named tool must be mentioned somewhere
@@ -3385,6 +3520,8 @@ CHECK FOR THESE VIOLATIONS ONLY:
 4. INVENTED TECH: a major technology presented as part of the stack that the user never specified or implied.
 5. DOMAIN MISMATCH: sections that don't fit the domain (e.g. a REST CRUD spec inside a Data Science PRD).
 6. SQL ORDER: a CREATE TABLE referencing another table via FOREIGN KEY before that table is defined.
+7. INTERNAL CONTRADICTION: document contradicts itself (e.g. Context API in frontend table but Redux in state section; microservices claim with monolith stack; React Router with Next.js; VITE_ env vars with Next.js).
+8. DOMAIN INCOMPLETE: food/e-commerce app missing menu_items/products, order_items, order status, or Stripe payment endpoints when Stripe is listed.
 
 GENERATED PRD:
 """
@@ -3541,6 +3678,16 @@ async function confirmAndGenerate() {
     const el = document.getElementById('tc-' + f.key);
     if (el) brief[f.key] = el.value.trim() || _currentBrief[f.key];
   });
+
+  // Re-enforce stack consistency after user edits (e.g. fix bad auth before generating)
+  const enforced = enforceStackConsistency(brief);
+  brief = enforced.brief;
+  if (enforced.fixes.length) {
+    _dom.stackFields.forEach(f => {
+      const el = document.getElementById('tc-' + f.key);
+      if (el && brief[f.key]) el.value = brief[f.key];
+    });
+  }
 
   document.getElementById('confirm-gen-btn').disabled = true;
   document.getElementById('gen-btn').disabled = true;

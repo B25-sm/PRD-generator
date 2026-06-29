@@ -399,6 +399,33 @@ textarea::placeholder { color: var(--text-muted); }
   margin-left: auto;
 }
 
+.countdown-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--accent2);
+  background: rgba(245, 80, 54, 0.1);
+  border: 1px solid rgba(245, 80, 54, 0.28);
+  border-radius: 100px;
+  padding: 2px 10px;
+  min-width: 44px;
+  justify-content: center;
+}
+.countdown-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent2);
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+@keyframes countdown-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.7); }
+}
+
 .progress-bar-wrap {
   background: var(--surface2);
   border-radius: 100px;
@@ -2918,10 +2945,10 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const waitSec = Math.ceil(waitMs / 1000);
     setProgress(
       null,
-      `⏳ Groq rate limit hit — auto-retrying in ${waitSec}s (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})…`,
+      `⏳ Groq rate limit hit — auto-retrying (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})…`,
       ''
     );
-    await new Promise(r => setTimeout(r, waitMs));
+    await waitWithCountdown(waitSec);
     return callGroq({ systemPrompt, userPrompt, maxTokens, temperature }, retryCount + 1);
   }
 
@@ -3641,6 +3668,32 @@ function setProgress(pct, label, meta) {
   if (pct !== null) document.getElementById('progress-bar').style.width = pct + '%';
   if (label) document.getElementById('progress-label').textContent = label;
   if (meta  !== undefined) document.getElementById('progress-meta').textContent = meta;
+}
+
+// Wait `totalSec` seconds while showing a live countdown pill in the progress meta.
+function waitWithCountdown(totalSec) {
+  const metaEl = document.getElementById('progress-meta');
+  return new Promise(resolve => {
+    let remaining = totalSec;
+    const render = () => {
+      if (!metaEl) return;
+      const mm = Math.floor(remaining / 60);
+      const ss = remaining % 60;
+      const txt = mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${ss}s`;
+      metaEl.innerHTML = `<span class="countdown-pill"><span class="countdown-dot"></span>${txt}</span>`;
+    };
+    render();
+    const tick = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(tick);
+        if (metaEl) metaEl.textContent = '';
+        resolve();
+      } else {
+        render();
+      }
+    }, 1000);
+  });
 }
 
 function buildFallbackBrief(idea) {

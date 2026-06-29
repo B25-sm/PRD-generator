@@ -3333,6 +3333,22 @@ function localPRDAudit(brief, md) {
     if (/mongo/i.test(db) && /CREATE TABLE/i.test(text)) {
       issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Database is MongoDB but the schema uses SQL CREATE TABLE statements.', fix: 'Use MongoDB collection/document schema (Mongoose models), not SQL DDL.' });
     }
+
+    // Framework-bound auth libraries must match the backend runtime.
+    // (Only flag libraries that are genuinely tied to one ecosystem — not
+    //  backend-agnostic providers like Auth0/Firebase/Clerk/Okta/Cognito.)
+    const authStr = (brief.auth || '').toLowerCase();
+    const feStr   = (brief.frontend || '').toLowerCase();
+    const isNext  = /next\.js|nextjs|\bnext\b/.test(feStr);
+    const authFix = `Use an auth method native to ${brief.backend} (e.g. Spring Security + JWT for Spring; JWT + Passport.js for Node; Django auth for Django; Devise for Rails).`;
+    const flagAuth = (libDesc) => issues.push({ severity: 'critical', where: 'Authentication', problem: `Auth is "${brief.auth}" but ${libDesc} does not work with a ${brief.backend} backend.`, fix: authFix });
+
+    if (/passport/.test(authStr) && !isNode)                          flagAuth('Passport.js (Node.js-only middleware)');
+    if (/(nextauth|next-auth|auth\.js)/.test(authStr) && !isNode && !isNext) flagAuth('NextAuth / Auth.js (Next.js/Node-only)');
+    if (/\blucia\b/.test(authStr) && !isNode && !isNext)              flagAuth('Lucia (JavaScript/TypeScript-only)');
+    if (/supertokens/.test(authStr) && !isNode && !isNext && !isPython) flagAuth('SuperTokens (Node/Python SDK)');
+    if (/spring security/.test(authStr) && !isJava)                  flagAuth('Spring Security (Java/Spring-only)');
+    if (/\bdevise\b/.test(authStr) && !isRuby)                        flagAuth('Devise (Ruby on Rails-only)');
   }
 
   // Every explicitly named tool must be mentioned somewhere
@@ -3364,6 +3380,7 @@ Tools: ${brief.otherTools || 'None'}
 CHECK FOR THESE VIOLATIONS ONLY:
 1. STACK MISMATCH: any technology, ORM, language, framework or concept that contradicts the chosen stack (e.g. Hibernate/Spring/JPA in a Node project; Django ORM in a Java project; SQL tables when DB is MongoDB).
 2. WRONG LAYER: a technology placed in the wrong layer (e.g. an HTTP client like Axios listed under Backend; an ORM under Frontend; a state library like Redux listed as Auth).
+2b. AUTH RUNTIME MISMATCH: a framework-bound auth library that cannot run on the chosen backend (e.g. NextAuth/Passport.js — Node/Next only — paired with a Spring/Java or Django/Python backend; Spring Security in a non-Java backend; Devise outside Rails). Backend-agnostic providers (Auth0, Firebase, Clerk, Okta, Cognito) are fine anywhere.
 3. DROPPED TOOL: a tool the user specified that is missing from the PRD.
 4. INVENTED TECH: a major technology presented as part of the stack that the user never specified or implied.
 5. DOMAIN MISMATCH: sections that don't fit the domain (e.g. a REST CRUD spec inside a Data Science PRD).

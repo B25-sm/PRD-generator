@@ -775,7 +775,7 @@ textarea::placeholder { color: var(--text-muted); }
 }
 .domain-pills {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
 .domain-pill {
@@ -1398,9 +1398,13 @@ footer a:hover { color: var(--accent2); }
         <span class="domain-pill-icon">🤖</span>
         <span class="domain-pill-text"><strong>AI / ML</strong><small>training · LLM apps · CV · MLOps</small></span>
       </button>
-      <button type="button" class="domain-pill" data-domain="data" onclick="selectDomain('data')">
-        <span class="domain-pill-icon">📊</span>
-        <span class="domain-pill-text"><strong>Data Science &amp; Analytics</strong><small>pipelines · warehouse · BI</small></span>
+      <button type="button" class="domain-pill" data-domain="datasci" onclick="selectDomain('datasci')">
+        <span class="domain-pill-icon">🔬</span>
+        <span class="domain-pill-text"><strong>Data Science</strong><small>EDA · stats · modeling</small></span>
+      </button>
+      <button type="button" class="domain-pill" data-domain="dataanalysis" onclick="selectDomain('dataanalysis')">
+        <span class="domain-pill-icon">📈</span>
+        <span class="domain-pill-text"><strong>Data Analysis</strong><small>BI · KPIs · SQL reporting</small></span>
       </button>
       <button type="button" class="domain-pill" data-domain="security" onclick="selectDomain('security')">
         <span class="domain-pill-icon">🔐</span>
@@ -1933,22 +1937,38 @@ const DOMAINS = {
     build: (b) => buildMLPrompt(b)
   },
 
-  data: {
-    id: 'data', label: 'Data Science & Analytics', icon: '📊',
-    sub: 'Pipelines, warehouses, dashboards, statistical analysis, BI',
+  datasci: {
+    id: 'datasci', label: 'Data Science', icon: '🔬',
+    sub: 'EDA, statistics, hypothesis testing, modeling & experimentation',
     sectionCount: 15,
     stackFields: [
-      { key: 'language',      label: 'Language',       cat: 'language',      desc: 'Primary language(s) (e.g. Python, SQL, R)', placeholder: 'e.g. Python, SQL' },
-      { key: 'processing',    label: 'Processing',     cat: 'dataproc',      desc: 'Data processing/transform tools (e.g. pandas, Spark, dbt)', placeholder: 'e.g. pandas, Spark, dbt' },
-      { key: 'warehouse',     label: 'Warehouse / Store', cat: 'warehouse',  desc: 'Data warehouse / store (e.g. Snowflake, BigQuery, PostgreSQL, DuckDB)', placeholder: 'e.g. Snowflake, BigQuery, PostgreSQL' },
-      { key: 'orchestration', label: 'Orchestration',  cat: 'orchestration', desc: 'Pipeline orchestration (e.g. Airflow, Prefect, Dagster)', placeholder: 'e.g. Airflow, Prefect, Dagster' },
-      { key: 'bi',            label: 'BI / Viz',       cat: 'bi',            desc: 'BI / visualization (e.g. Tableau, Power BI, Metabase, Streamlit)', placeholder: 'e.g. Tableau, Power BI, Metabase' },
-      { key: 'hosting',       label: 'Infra / Hosting', cat: null,           desc: 'Where it runs (e.g. cloud warehouse + containerized jobs)', placeholder: 'e.g. GCP, AWS, on-prem' },
-      { key: 'otherTools',    label: 'Other Tools',    cat: null,            desc: 'Other tools (e.g. Great Expectations, Kafka, Fivetran) or "None"', placeholder: 'e.g. Great Expectations, Kafka' }
+      { key: 'language',   label: 'Language',       cat: 'language', desc: 'Primary language (e.g. Python 3.11, R)', placeholder: 'e.g. Python, R' },
+      { key: 'libraries',  label: 'Core Libraries', cat: null,       desc: 'Analysis/modeling libraries (e.g. pandas, NumPy, scikit-learn, statsmodels, SciPy)', placeholder: 'e.g. pandas, scikit-learn, statsmodels' },
+      { key: 'dataSource', label: 'Data Source',    cat: 'warehouse',desc: 'Where the data comes from (e.g. PostgreSQL, Snowflake, CSV exports, BigQuery)', placeholder: 'e.g. PostgreSQL, CSV, Snowflake' },
+      { key: 'notebook',   label: 'Environment',    cat: null,       desc: 'Working environment (e.g. Jupyter, Google Colab, VS Code)', placeholder: 'e.g. Jupyter, Colab' },
+      { key: 'viz',        label: 'Visualization',  cat: null,       desc: 'Visualization libraries (e.g. matplotlib, seaborn, Plotly)', placeholder: 'e.g. matplotlib, seaborn, Plotly' },
+      { key: 'compute',    label: 'Compute',        cat: 'compute',  desc: 'Where analysis runs (e.g. laptop, Colab GPU, cloud VM)', placeholder: 'e.g. Colab, cloud VM' },
+      { key: 'otherTools', label: 'Other Tools',    cat: null,       desc: 'Other tools (e.g. MLflow, DVC, Optuna) or "None"', placeholder: 'e.g. MLflow, DVC' }
     ],
-    expandHint: 'Infer a realistic data/analytics stack: language (Python/SQL), processing (pandas/Spark/dbt), a warehouse, orchestration, and a BI tool. coreFeatures should be analytics deliverables (e.g. "Ingest & model sales data", "Build executive KPI dashboard", "Cohort retention analysis").',
-    progressSteps: [[16,'Defining objectives & KPIs…'],[30,'Mapping data sources & lineage…'],[45,'Designing ingestion & ETL…'],[58,'Modeling the warehouse…'],[70,'Specifying analysis methodology…'],[82,'Designing dashboards…'],[93,'Finalizing all sections…']],
-    build: (b) => buildDataPrompt(b)
+    expandHint: 'Infer a realistic data-science stack: language (usually Python or R), analysis libraries (pandas/NumPy/scikit-learn/statsmodels), a data source, notebook environment, and visualization libraries. coreFeatures should be DATA-SCIENCE deliverables (e.g. "Exploratory analysis of churn drivers", "Hypothesis test on pricing change", "Build & validate a predictive model", "Customer segmentation"). This is research/insight work, NOT a production ETL pipeline.',
+    progressSteps: [[16,'Framing questions & hypotheses…'],[30,'Planning data understanding & EDA…'],[45,'Specifying statistical methodology…'],[58,'Designing modeling & experiments…'],[70,'Defining evaluation & validation…'],[82,'Writing findings & recommendations…'],[93,'Finalizing all sections…']],
+    build: (b) => buildDataSciPrompt(b)
+  },
+
+  dataanalysis: {
+    id: 'dataanalysis', label: 'Data Analysis', icon: '📈',
+    sub: 'BI dashboards, KPI reporting, SQL analytics, descriptive insights',
+    sectionCount: 14,
+    stackFields: [
+      { key: 'language',   label: 'Language / Query', cat: 'language',  desc: 'Primary language (e.g. SQL, Python, R)', placeholder: 'e.g. SQL, Python' },
+      { key: 'dataSource', label: 'Data Source',      cat: 'warehouse', desc: 'Where the data lives (e.g. PostgreSQL, BigQuery, Snowflake, Google Sheets, CSV)', placeholder: 'e.g. PostgreSQL, BigQuery, Sheets' },
+      { key: 'transform',  label: 'Prep / Transform', cat: null,        desc: 'Data prep tools (e.g. SQL, dbt, Power Query, Excel, pandas)', placeholder: 'e.g. SQL, dbt, Power Query' },
+      { key: 'bi',         label: 'BI / Dashboard',   cat: 'bi',        desc: 'BI / dashboard tool (e.g. Tableau, Power BI, Metabase, Looker, Streamlit)', placeholder: 'e.g. Tableau, Power BI, Metabase' },
+      { key: 'otherTools', label: 'Other Tools',      cat: null,        desc: 'Other tools (e.g. Excel, Google Analytics, Fivetran) or "None"', placeholder: 'e.g. Excel, Google Analytics' }
+    ],
+    expandHint: 'Infer a realistic data-analysis / BI stack: a query language (usually SQL, sometimes Python), a data source, a prep/transform tool, and a BI/dashboard tool. coreFeatures should be ANALYST/BI deliverables (e.g. "Executive KPI dashboard", "Monthly sales report", "Funnel & cohort analysis", "Marketing channel attribution"). Focus on answering business questions and reporting — NOT model training or heavy data engineering.',
+    progressSteps: [[16,'Defining objectives & KPIs…'],[30,'Identifying data sources…'],[45,'Defining the metrics dictionary…'],[58,'Specifying SQL / transformations…'],[70,'Designing dashboards & reports…'],[82,'Writing insights & recommendations…'],[93,'Finalizing all sections…']],
+    build: (b) => buildDataAnalysisPrompt(b)
   },
 
   security: {
@@ -1989,7 +2009,8 @@ function selectDomain(id) {
 const DOMAIN_IDEA_PLACEHOLDERS = {
   web: "Even a one-liner works — e.g. 'blog website in java fullstack' or 'kanban SaaS in MERN'.",
   ml: "Even a one-liner works — e.g. 'churn prediction model' or 'RAG chatbot over our docs'.",
-  data: "Even a one-liner works — e.g. 'sales analytics warehouse + dashboard' or 'customer cohort analysis'.",
+  datasci: "Even a one-liner works — e.g. 'analyze churn drivers' or 'A/B test a pricing change'.",
+  dataanalysis: "Even a one-liner works — e.g. 'executive sales KPI dashboard' or 'marketing funnel report'.",
   security: "Even a one-liner works — e.g. 'threat model + pentest plan for our API' or 'SOC2 readiness for a SaaS'."
 };
 Object.keys(DOMAIN_IDEA_PLACEHOLDERS).forEach(k => { DOMAINS[k].ideaPlaceholder = DOMAIN_IDEA_PLACEHOLDERS[k]; });
@@ -2469,105 +2490,197 @@ Phase 1 Data & validation · Phase 2 Baseline model · Phase 3 Feature pipeline 
 }
 
 // ═══════════════════════════════════════════════════════════
-//  STAGE 2 — Data Science & Analytics PRD template
+//  STAGE 2 — Data Science PRD template (research / modeling / stats)
 // ═══════════════════════════════════════════════════════════
-function buildDataPrompt(brief) {
+function buildDataSciPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
   return `PROJECT: ${brief.projectName} (${brief.appType})
-STACK: ${g('language','Python + SQL')} | Processing: ${g('processing')} | Warehouse: ${g('warehouse')} | Orchestration: ${g('orchestration')} | BI: ${g('bi')}
-INFRA: ${g('hosting')}
+STACK: ${g('language','Python')} | Libraries: ${g('libraries')} | Data: ${g('dataSource')} | Env: ${g('notebook')} | Viz: ${g('viz')} | Compute: ${g('compute')}
 TOOLS: ${g('otherTools','None')}
-STAKEHOLDERS: ${brief.targetUsers}
+STAKEHOLDERS / DECISION-MAKERS: ${brief.targetUsers}
 PROBLEM: ${brief.coreProblem}
 DELIVERABLES: ${(brief.coreFeatures||[]).join(' | ')}
 NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
 OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
 DATE: ${today}
 
-Write a professional Data / Analytics Product Requirements Document in Markdown. Specification prose + tables only. SQL DDL and dbt-style model descriptions are allowed; no long Python scripts.
+Write a professional Data Science Product Requirements Document in Markdown. This is RESEARCH/ANALYSIS work — focus on questions, data understanding, statistics, modeling, and interpreting results. Specification prose + tables only. No long scripts or notebook dumps; small formula/snippet references are fine.
 
-# ${brief.projectName} — Data & Analytics PRD
-*${today} | v1.0 | ${g('warehouse','Warehouse')} · ${g('bi','BI')}*
+# ${brief.projectName} — Data Science PRD
+*${today} | v1.0 | ${g('language','Python')} · analysis & modeling*
 
 ## 1. Executive Summary
-4 paragraphs: the decision/question this enables · why current reporting falls short · who consumes it · MVP scope + definition of done.
+4 paragraphs: the question/decision this informs · why current understanding is insufficient · who acts on the results · scope + what "done" means (a validated answer or model).
+### Objectives
+5 measurable objectives (tie analysis to a decision or metric).
+### Non-Goals
+Out-of-scope items with one-line reason each.
+
+## 2. Problem Statement & Hypotheses
+Frame the analytical problem precisely. State the hypotheses to test (H0 / H1 where applicable) and the decision each result drives.
+| Hypothesis | H0 | H1 | Decision if Supported |
+
+## 3. Data Understanding
+### Data Sources
+| Source | Type | Volume | Time Range | Granularity | PII? |
+### Data Dictionary
+| Field | Type | Description | Example | % Missing | Notes |
+(every relevant variable, including the target/outcome if predictive)
+
+## 4. Exploratory Data Analysis (EDA) Plan
+What will be examined: distributions, outliers, correlations, missingness patterns, segment comparisons. Key questions each EDA step answers and the expected visualizations (using ${g('viz','matplotlib/seaborn')}).
+
+## 5. Data Preparation
+| Step | Action | Rationale | Risk if Skipped |
+(cleaning, imputation, outlier handling, encoding, transformation, train/test split if modeling). Note leakage prevention.
+
+## 6. Statistical Methodology
+For each hypothesis/question: the method (t-test, ANOVA, chi-square, correlation, regression, time-series, Bayesian, causal inference), assumptions and how they're checked, significance level (α), power, and effect-size measure. Multiple-comparison handling.
+| Question | Method | Assumptions Checked | Significance / Metric |
+
+## 7. Modeling & Experimentation
+### Approach
+Candidate methods (baseline → proposed), why each fits. If experimentation: design (A/B, holdout), randomization unit, sample-size/power calc.
+| Model / Experiment | Type | Inputs | Output | Why Chosen |
+### Hyperparameters / Settings
+| Setting | Value | Search Range |
+(prose only — no training-loop code)
+
+## 8. Evaluation & Validation
+### Metrics
+| Metric | Definition | Target | Why This Metric |
+(task-appropriate: regression → RMSE/MAE/R²; classification → precision/recall/F1/ROC-AUC; inference → CI width, p-value, effect size)
+### Validation Strategy
+Cross-validation / out-of-time validation / bootstrap. Robustness & sensitivity checks. Sliced performance to detect bias.
+
+## 9. Findings & Interpretation
+How results will be summarized and interpreted in business terms. Confidence/uncertainty communication. What would change the conclusion.
+
+## 10. Recommendations & Decision Impact
+| Finding | Recommendation | Owner | Expected Impact | Confidence |
+Translate analysis into concrete actions.
+
+## 11. Reproducibility & Tooling
+Environment (${g('notebook','Jupyter')} + ${g('language','Python')}), dependency pinning, random seeds, data/version snapshots, notebook → report workflow, ${g('otherTools','version control')}.
+
+## 12. Risks, Bias & Ethics
+| Risk | Description | Mitigation |
+(sampling bias, confounding, data quality, privacy/PII, over-interpretation, p-hacking, fairness across groups).
+
+## 13. Compute & Cost
+Where analysis runs (${g('compute','laptop / Colab / cloud VM')}), data-size considerations, cost controls. Prefer free/low-cost tiers.
+
+## 14. Environment Variables & Project Structure
+| Variable | Example | Description | Required |
+\`\`\`
+project-root/
+├── data/            ← raw / interim / processed
+├── notebooks/       ← 01-eda, 02-stats, 03-modeling
+├── src/             ← reusable analysis functions
+├── reports/         ← figures + written findings
+├── requirements.txt
+└── README.md
+[expand with ← comments]
+\`\`\`
+### Build Order
+Phase 1 Data load & validation · Phase 2 EDA · Phase 3 Cleaning/prep · Phase 4 Statistical tests · Phase 5 Modeling/experiments · Phase 6 Evaluation · Phase 7 Findings & recommendations · Phase 8 Reproducible report. One concrete task each.
+
+## 15. Glossary
+| Term | Definition |
+(20+ rows: every library, statistical method, metric, and acronym — plain-English)
+
+*End of PRD — ${brief.projectName} v1.0*`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  STAGE 2 — Data Analysis PRD template (BI / reporting / SQL)
+// ═══════════════════════════════════════════════════════════
+function buildDataAnalysisPrompt(brief) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
+  return `PROJECT: ${brief.projectName} (${brief.appType})
+STACK: ${g('language','SQL')} | Data: ${g('dataSource')} | Prep: ${g('transform')} | BI: ${g('bi')}
+TOOLS: ${g('otherTools','None')}
+AUDIENCE / STAKEHOLDERS: ${brief.targetUsers}
+PROBLEM: ${brief.coreProblem}
+DELIVERABLES: ${(brief.coreFeatures||[]).join(' | ')}
+NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
+OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
+DATE: ${today}
+
+Write a professional Data Analysis / BI Product Requirements Document in Markdown. This is ANALYST / REPORTING work — focus on business questions, metrics, SQL/transformations, dashboards, and insights. Specification prose + tables only. SQL queries (as the analysis spec) are allowed; no long application code.
+
+# ${brief.projectName} — Data Analysis PRD
+*${today} | v1.0 | ${g('dataSource','Data')} · ${g('bi','BI')}*
+
+## 1. Executive Summary
+4 paragraphs: the business question this answers · why current reporting falls short · who consumes the dashboards/reports · scope + definition of done.
 ### Objectives & KPIs
 | Objective | KPI | Definition | Target |
 ### Non-Goals
 Out-of-scope items with one-line reason each.
 
 ## 2. Key Business Questions
-Numbered list of the concrete questions the analytics must answer (e.g. "Which channels drive highest-LTV users?").
+Numbered list of concrete questions the analysis answers (e.g. "Which channels drive the highest-LTV customers?", "Where do users drop off in onboarding?").
 
-## 3. Data Sources & Lineage
-| Source | System | Type | Volume | Refresh | Owner | PII? |
-### Lineage
-ASCII flow: Sources → Ingestion → Raw → Staging → Marts → BI. 2-sentence rationale for the architecture (e.g. ELT vs ETL, medallion layers).
+## 3. Data Sources
+| Source | System | Tables/Fields Used | Refresh | Owner | PII? |
+(everything pulled from ${g('dataSource','the data source')})
 
-## 4. Ingestion & Pipeline
-| Dataset | Method | Frequency | Load Type | Idempotent? |
-(extraction method per source — e.g. Fivetran/${g('processing','custom')}, full vs incremental). Orchestrated by ${g('orchestration','Airflow')}: describe the DAG and dependencies in prose.
+## 4. Metrics & KPI Dictionary
+| Metric | Definition | Formula / Logic | Grain | Owner |
+(define every metric ONCE — single source of truth; note any caveats or filters)
 
-## 5. Data Modeling (Warehouse)
-### Modeling Strategy
-Star schema / medallion (bronze/silver/gold) / Data Vault — pick one and justify in 2 sentences.
-### Core Tables / Models
+## 5. Data Preparation & Transformation
+How raw data is shaped for analysis using ${g('transform','SQL')}: joins, filters, aggregations, derived fields, handling of nulls/duplicates. Provide the key analytical SQL queries (the analysis IS the spec).
 \`\`\`sql
--- Staging + mart DDL for the key tables. Exact types, PK/FK, partitioning/clustering keys.
--- CRITICAL ORDERING: referenced tables before referencing tables.
+-- Representative query/queries that compute the core metrics
 \`\`\`
-### Dimensional Model
-| Model | Grain | Type (fact/dim) | Key Columns | Source |
 
-## 6. Transformations & Business Logic
-| Metric / Field | Definition (SQL logic in prose) | Source Columns | Owner |
-(define every non-trivial metric ONCE here — single source of truth; note SCD handling for dimensions)
+## 6. Analysis Approach
+For each business question: technique (trend, segmentation, cohort, funnel, comparison, distribution, correlation), the breakdown dimensions, and the expected output. Note assumptions and any caveats that could mislead.
+| Question | Technique | Dimensions | Output |
 
-## 7. Analysis Methodology
-For each key question: approach (descriptive / diagnostic / statistical test / cohort / funnel / forecasting), method, assumptions, and validity threats. Name statistical tests where relevant (t-test, chi-square, regression) and significance level.
+## 7. Dashboards & Reports
+| Dashboard / Report | Audience | Key Visuals | Filters / Drilldowns | Refresh |
+(built in ${g('bi','the BI tool')}). Describe layout and the decision each chart supports. Specify chart types deliberately (line for trend, bar for comparison, etc.).
 
-## 8. Dashboards & Reporting
-| Dashboard | Audience | Key Visuals | Filters | Refresh |
-(built in ${g('bi','the BI tool')}). Describe the layout and the decision each chart supports.
-
-## 9. Metrics Dictionary
-| Metric | Definition | Formula | Grain | Owner |
-(the canonical, governed metric definitions)
-
-## 10. Data Quality & Validation
+## 8. Data Quality & Validation
 | Check | Rule | Severity | Action on Failure |
-(freshness, volume, schema, null/uniqueness, referential integrity, range). Tooling (e.g. ${g('otherTools','Great Expectations / dbt tests')}). Where checks run in the pipeline.
+(freshness, completeness, reconciliation vs source-of-truth, null/duplicate checks). How numbers are validated before publishing.
 
-## 11. Orchestration & Scheduling
-${g('orchestration','Airflow')} schedule table | DAG | Trigger | SLA | Retry | Alerting. Backfill strategy.
+## 9. Insights & Recommendations
+How findings are turned into recommendations.
+| Insight | Supporting Metric | Recommended Action | Owner | Confidence |
 
-## 12. Governance, Access & Privacy
-| Asset | Classification | Who Has Access | Masking/PII Handling |
-Role-based access, PII masking, retention policy, audit logging.
+## 10. Refresh, Distribution & Access
+Refresh cadence and method, how reports are delivered (scheduled email, embedded, self-serve), and who can access what.
 
-## 13. Infrastructure & Cost
-Warehouse sizing/credits, compute for jobs, cost controls, free/low-cost tiers where possible.
+## 11. Governance & Privacy
+| Asset | Classification | Who Has Access | PII Handling |
+Access control, PII masking, retention.
 
-## 14. Environment Variables & Project Structure
-| Variable | Example | Description | Required | Component |
+## 12. Tooling & Cost
+${g('bi','BI')} licensing/seats, query/warehouse cost controls, free/low-cost tiers where possible.
+
+## 13. Project Structure & Build Order
 \`\`\`
 project-root/
-├── ingestion/      ← extract-load jobs
-├── transform/      ← dbt models (staging/marts) or SQL
-├── dags/           ← ${g('orchestration','Airflow')} pipelines
-├── analysis/       ← notebooks + scripts
-├── dashboards/     ← BI definitions
-├── tests/          ← data quality checks
-└── .env.example
+├── queries/         ← analytical SQL
+├── transforms/      ← prep (${g('transform','SQL/dbt')})
+├── dashboards/      ← BI definitions / exports
+├── reports/         ← written findings
+├── validation/      ← data-quality checks
+└── README.md
 [expand with ← comments]
 \`\`\`
 ### Build Order
-Phase 1 Sources & ingestion · Phase 2 Staging models · Phase 3 Marts/dimensional · Phase 4 Metrics layer · Phase 5 Quality checks · Phase 6 Dashboards · Phase 7 Orchestration · Phase 8 Handover. One concrete task each.
+Phase 1 Connect sources · Phase 2 Metric definitions · Phase 3 Prep queries · Phase 4 Core analysis · Phase 5 Dashboards · Phase 6 Quality checks · Phase 7 Insights writeup · Phase 8 Publish & schedule. One concrete task each.
 
-## 15. Glossary
+## 14. Glossary
 | Term | Definition |
-(20+ rows: every tool, modeling term, statistical method, acronym — plain-English)
+(20+ rows: every tool, metric, analysis technique, acronym — plain-English)
 
 *End of PRD — ${brief.projectName} v1.0*`;
 }
@@ -3028,8 +3141,10 @@ function domainSystemExtra(d) {
   switch (d.id) {
     case 'ml':
       return common + `\n\nDOMAIN = AI/ML. This is NOT a web-app PRD: do NOT invent a frontend table, REST CRUD spec, or generic SQL schema unless the project genuinely needs them. Focus on data, features, model, training, evaluation metrics, serving, and MLOps. CODE ALLOWED ONLY FOR: data/feature schema tables, JSON request/response contracts, YAML config (hyperparameters/pipeline), metric tables, folder trees, env-var tables. NEVER write training loops, model class bodies, or notebook code. Choose metrics that fit the task (classification → precision/recall/F1/ROC-AUC; regression → RMSE/MAE/R²; ranking → MAP/NDCG; generative → BLEU/ROUGE + human eval). Always include a baseline and guardrail metrics.`;
-    case 'data':
-      return common + `\n\nDOMAIN = DATA/ANALYTICS. This is NOT a web-app PRD: do NOT invent a frontend, auth lifecycle, or REST CRUD spec unless genuinely needed. Focus on data sources, lineage, ingestion/ELT, warehouse modeling, transformations, analysis methodology, dashboards, and data quality. CODE ALLOWED ONLY FOR: SQL DDL + warehouse model definitions, metric definitions, config/YAML, folder trees, env-var tables. SQL CREATE TABLE statements MUST be in dependency order. Every metric must be defined exactly once in the metrics dictionary.`;
+    case 'datasci':
+      return common + `\n\nDOMAIN = DATA SCIENCE (research/analysis). This is NOT a web-app or data-pipeline PRD: do NOT invent a frontend, REST CRUD spec, or production ETL/warehouse-engineering sections. Focus on questions/hypotheses, data understanding, EDA, statistical methodology, modeling/experimentation, and rigorous interpretation of results. CODE ALLOWED ONLY FOR: small formulas, data-dictionary tables, metric tables, folder trees, env-var tables. NO long scripts or notebook dumps. Always state statistical assumptions, significance level, and uncertainty; pick task-appropriate metrics; include a baseline.`;
+    case 'dataanalysis':
+      return common + `\n\nDOMAIN = DATA ANALYSIS (BI/reporting). This is NOT a web-app, ML, or data-engineering PRD: focus on business questions, a governed metrics dictionary, SQL/transformations, dashboards & reports, data quality, and actionable insights. CODE ALLOWED ONLY FOR: analytical SQL queries (the analysis IS the spec), metric definitions, config, folder trees, env-var tables. NO application code or model training. Define every metric exactly once; specify chart types deliberately; tie every insight to a recommendation.`;
     case 'security':
       return common + `\n\nDOMAIN = CYBERSECURITY. This is NOT a feature-build PRD: focus on assets, threat model (STRIDE), controls, AuthN/Z, data protection, detection/logging, incident response, vuln management, pentest plan, and compliance mapping. CODE ALLOWED ONLY FOR: config snippets, control/detection-rule tables, command references, folder trees, secret/env tables. ABSOLUTELY NO working exploit code, payloads, or attack scripts — describe methodology only. Map controls back to specific threats and map compliance requirements to concrete controls.`;
     default:
@@ -3214,10 +3329,11 @@ function buildFallbackBrief(idea) {
     outOfScope: ['Out-of-scope item 1', 'Out-of-scope item 2']
   };
   const defaults = {
-    web:      { frontend: 'React 18 + Vite', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier', otherTools: 'None' },
-    ml:       { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI + Docker', compute: 'Single GPU + Docker', otherTools: 'None' },
-    data:     { language: 'Python + SQL', processing: 'pandas + dbt', warehouse: 'PostgreSQL', orchestration: 'Airflow', bi: 'Metabase', hosting: 'Cloud (free tier)', otherTools: 'None' },
-    security: { targetSystem: 'Web app + REST API', language: 'Python', securityTools: 'OWASP ZAP, Trivy, Semgrep', siem: 'ELK', compliance: 'OWASP Top 10', hosting: 'AWS', otherTools: 'None' }
+    web:          { frontend: 'React 18 + Vite', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier', otherTools: 'None' },
+    ml:           { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI + Docker', compute: 'Single GPU + Docker', otherTools: 'None' },
+    datasci:      { language: 'Python 3.11', libraries: 'pandas, NumPy, scikit-learn, statsmodels', dataSource: 'PostgreSQL', notebook: 'Jupyter', viz: 'matplotlib, seaborn', compute: 'Local + Colab', otherTools: 'None' },
+    dataanalysis: { language: 'SQL + Python', dataSource: 'PostgreSQL', transform: 'SQL + dbt', bi: 'Metabase', otherTools: 'Excel' },
+    security:     { targetSystem: 'Web app + REST API', language: 'Python', securityTools: 'OWASP ZAP, Trivy, Semgrep', siem: 'ELK', compliance: 'OWASP Top 10', hosting: 'AWS', otherTools: 'None' }
   };
   return { ...common, ...(defaults[d.id] || defaults.web) };
 }

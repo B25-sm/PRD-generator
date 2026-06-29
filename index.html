@@ -1910,7 +1910,7 @@ const DOMAINS = {
       { key: 'frontend',   label: 'Frontend',    cat: 'frontend', desc: 'Specific frontend framework/tech (e.g. React 18, Next.js 14, Vue 3, Thymeleaf)', placeholder: 'e.g. React 18, Next.js, Thymeleaf' },
       { key: 'backend',    label: 'Backend',     cat: 'backend',  desc: 'Specific backend (e.g. Spring Boot 3.2, Django 4.2, Node.js + Express, FastAPI)', placeholder: 'e.g. Spring Boot, Node.js + Express' },
       { key: 'database',   label: 'Database',    cat: 'database', desc: 'Specific DB (e.g. PostgreSQL 16, MySQL 8, MongoDB 7)', placeholder: 'e.g. PostgreSQL, MySQL, MongoDB' },
-      { key: 'auth',       label: 'Auth',        cat: 'auth',     desc: 'Auth method (e.g. JWT + Spring Security, JWT + Passport.js, Session-based, Firebase Auth)', placeholder: 'e.g. JWT, OAuth2, Firebase Auth' },
+      { key: 'auth',       label: 'Auth',        cat: 'auth',     desc: 'Auth method (e.g. JWT + Passport.js, OAuth2, NextAuth, Firebase Auth, Supabase Auth). NOT state libraries like Redux.', placeholder: 'e.g. JWT, OAuth2, NextAuth — not Redux' },
       { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)'", placeholder: 'e.g. Vercel + Render + Supabase' },
       { key: 'otherTools', label: 'Other Tools', cat: null,       desc: 'Other tools like Redis, Stripe, SendGrid, Cloudinary (or "None")', placeholder: 'e.g. Stripe, Redis, Cloudinary' }
     ],
@@ -2888,11 +2888,24 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
 //  Unrecognized free text is allowed — we only block CONFIDENT mismatches.
 // ═══════════════════════════════════════════════════════════
 const TECH_SETS = {
-  frontend: ['react','vue','angular','svelte','sveltekit','next.js','nextjs','next','nuxt','solid','solidjs','qwik','astro','remix','thymeleaf','blazor','jquery','ember','backbone','preact','lit','htmx','material-ui','mui','tailwind','bootstrap','chakra','vuetify','antd','ant design'],
-  backend: ['spring','spring boot','django','flask','fastapi','express','express.js','nestjs','nest','node','node.js','laravel','symfony','rails','ruby on rails','.net','asp.net','dotnet','gin','fiber','echo','phoenix','koa','hapi','adonis','strapi','ktor','micronaut','quarkus'],
+  frontend: [
+    'react','vue','angular','svelte','sveltekit','next.js','nextjs','next','nuxt','solid','solidjs','qwik','astro','remix',
+    'thymeleaf','blazor','jquery','ember','backbone','preact','lit','htmx',
+    'material-ui','mui','tailwind','bootstrap','chakra','vuetify','antd','ant design',
+    // state management & client data — NOT auth
+    'redux','redux toolkit','rtk','zustand','mobx','recoil','jotai','pinia','vuex','ngrx',
+    'tanstack query','react query','tanstack','swr','apollo client','apollo','urql',
+    // build / routing / styling / testing / HTTP (frontend layer)
+    'vite','webpack','parcel','esbuild','rollup','react router','react-router','react hook form',
+    'axios','fetch api','css modules','styled-components','emotion','sass','scss','less',
+    'jest','vitest','cypress','playwright','testing library','storybook'
+  ],
+  backend: ['spring','spring boot','django','flask','fastapi','express','express.js','nestjs','nest','node','node.js','laravel','symfony','rails','ruby on rails','.net','asp.net','dotnet','gin','fiber','echo','phoenix','koa','hapi','adonis','strapi','ktor','micronaut','quarkus','graphql','apollo server','prisma','typeorm','sequelize','mongoose'],
   database: ['postgres','postgresql','postgre','mysql','mariadb','mongodb','mongo','sqlite','sql server','mssql','oracle','dynamodb','firestore','firebase','cassandra','couchdb','couchbase','neo4j','cockroachdb','planetscale','supabase','redis','snowflake','bigquery','elasticsearch','influxdb','timescaledb','duckdb','clickhouse'],
-  auth: ['jwt','oauth','oauth2','passport','passport.js','auth0','clerk','cognito','firebase','firebase auth','keycloak','okta','session','sessions','spring security','devise','lucia','supertokens','nextauth','next-auth','magic link'],
+  auth: ['jwt','oauth','oauth2','oauth 2','openid','oidc','passport','passport.js','auth0','clerk','cognito','firebase auth','keycloak','okta','session','sessions','spring security','devise','lucia','supertokens','nextauth','next-auth','magic link','bcrypt','argon2','supabase auth','amazon cognito','workos','stytch','kinde'],
   hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase'],
+  // integrations / services — belong in Other Tools, not Auth/Database/Frontend
+  tools: ['stripe','paypal','razorpay','sendgrid','mailgun','resend','postmark','twilio','cloudinary','imgix','uploadcare','pusher','ably','algolia','typesense','sentry','datadog','new relic','segment','mixpanel','amplitude','hotjar','intercom','hubspot','slack','discord','bull','celery','sidekiq','rabbitmq','kafka','fivetran','airbyte'],
   // ── ML / Data / Security categories ──
   language: ['python','r','julia','scala','sql','matlab','sas','java','c++','cpp','go','golang','rust','typescript','javascript','bash','shell','powershell','kotlin'],
   mlframework: ['pytorch','torch','tensorflow','tf','keras','scikit-learn','sklearn','scikit learn','xgboost','lightgbm','catboost','jax','hugging face','huggingface','transformers','fastai','spacy','nltk','opencv','langchain','llama','llamaindex','openai','mlx','onnx','statsmodels'],
@@ -2909,7 +2922,8 @@ const TECH_SETS = {
 };
 
 const CAT_LABEL = {
-  frontend: 'Frontend', backend: 'Backend', database: 'Database', auth: 'Auth', hosting: 'Hosting',
+  frontend: 'Frontend / state management', backend: 'Backend', database: 'Database', auth: 'Auth', hosting: 'Hosting',
+  tools: 'Other Tools / integrations',
   language: 'a programming language', mlframework: 'an ML framework', mltrack: 'an experiment tracker',
   mlserve: 'a model-serving tool', compute: 'compute/infra', dataproc: 'a data-processing tool',
   warehouse: 'a data store/warehouse', bi: 'a BI/visualization tool', orchestration: 'an orchestrator',
@@ -2948,7 +2962,7 @@ function exampleFor(cat) {
     frontend: 'a real frontend (e.g. React, Vue, Angular)',
     backend: 'a real backend (e.g. Spring Boot, Django, Express)',
     database: 'a real database (e.g. PostgreSQL, MySQL, MongoDB)',
-    auth: 'a real auth method (e.g. JWT, OAuth2, Firebase Auth)',
+    auth: 'a real auth method (e.g. JWT, OAuth2, NextAuth, Firebase Auth — not Redux, which is state management)',
     hosting: 'a real host (e.g. Vercel, Render, Railway)',
     language: 'a language (e.g. Python, R, SQL)',
     mlframework: 'an ML framework (e.g. PyTorch, TensorFlow, scikit-learn)',

@@ -3751,7 +3751,7 @@ async function confirmAndGenerate() {
 
   // Merge any user edits back into the brief (domain-aware fields)
   const _dom = getDomain(_currentBrief.domain || currentDomainId);
-  const brief = { ..._currentBrief, domain: _dom.id };
+  let brief = { ..._currentBrief, domain: _dom.id };
   _dom.stackFields.forEach(f => {
     const el = document.getElementById('tc-' + f.key);
     if (el) brief[f.key] = el.value.trim() || _currentBrief[f.key];

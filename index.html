@@ -1741,12 +1741,15 @@ const GROQ_LIMITS = {
   maxReqPerDay: 100,        // daily cap — 100 PRDs/day uses ~1.2M tokens, well under daily limit
 
   // Retry settings for 429 responses. We honour Groq's Retry-After header when
-  // present; otherwise back off exponentially. If a burst of retries still fails,
-  // we wait a full TPM window and start again — we do NOT give up after ~8 min.
-  maxRetries: 8,
-  baseRetryDelayMs: 15000,  // 15s base, doubles each retry
-  maxTpmResetCycles: 15,    // up to 15 × 65s TPM refreshes before hard fail
-  tpmWindowWaitSec: 65,     // Groq TPM resets per 60s window; 65s is a safe refresh
+  // present; otherwise back off exponentially but CAP each wait — waiting one full
+  // 60s window already refreshes the TPM quota, so longer single waits are useless
+  // (and they made the worst-case total balloon to ~1 hour). With the cap, the
+  // worst case is small: 15+30+60+60 = ~2:45.
+  maxRetries: 4,
+  baseRetryDelayMs: 15000,  // 15s base, doubles each retry…
+  maxBackoffMs: 60000,      // …but never wait more than 60s for a single retry
+  maxTpmResetCycles: 12,    // if still limited, refresh the 60s window up to 12×
+  tpmWindowWaitSec: 62,     // Groq TPM resets per 60s window; 62s is a safe refresh
   tpmLimitPerMin: 12000,    // llama-3.3-70b-versatile free-tier TPM (matches tpmLimit)
   tpmSafetyMarginTokens: 800,
 };
@@ -3229,11 +3232,12 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       // Reset per-burst retry counter — TPM window should be clear now.
       return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, 0, tpmResetCycle + 1);
     }
-    // Try to read Retry-After header from Groq, else use exponential backoff
+    // Try to read Retry-After header from Groq, else use capped exponential backoff
     const retryAfter = response.headers.get('retry-after');
-    const waitMs = retryAfter
+    const rawWaitMs = retryAfter
       ? parseInt(retryAfter, 10) * 1000
       : GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount);
+    const waitMs = Math.min(rawWaitMs, GROQ_LIMITS.maxBackoffMs);
 
     const waitSec = Math.ceil(waitMs / 1000);
     if (!_rateLimitSession.budgetSec) {
@@ -3242,7 +3246,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const totalBudget = _rateLimitSession.budgetSec;
     setProgress(
       null,
-      `⏳ Groq rate limit — up to ${formatWaitTime(totalBudget)} total wait (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})`,
+      `⏳ Groq rate limit — resuming in ${formatWaitTime(waitSec)} (auto, attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})`,
       undefined
     );
     await waitWithCountdown(waitSec, {
@@ -4258,13 +4262,13 @@ function formatWaitTime(sec) {
   return mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${s}s`;
 }
 
-// Max backoff seconds if every retry in one burst hits 429.
+// Worst-case seconds if every retry in one burst hits 429 (each wait is capped).
 function estimateTotalWaitAllAttempts() {
   let total = 0;
   for (let i = 0; i < GROQ_LIMITS.maxRetries; i++) {
-    total += Math.ceil(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, i) / 1000);
+    total += Math.min(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, i), GROQ_LIMITS.maxBackoffMs) / 1000;
   }
-  return total;
+  return Math.ceil(total);
 }
 
 // Wait out a Groq rate limit / token-quota pause with a prominent panel.
@@ -4290,26 +4294,22 @@ function waitWithCountdown(totalSec, opts = {}) {
       if (!panel) return;
       const pauseLeft = formatWaitTime(remaining);
       const budgetFmt = formatWaitTime(budget);
-      const usedSec = _rateLimitSession.elapsedSec + (pauseLen - remaining);
-      const usedFmt = formatWaitTime(usedSec);
-      const leftBudgetFmt = formatWaitTime(Math.max(0, budget - usedSec));
       const pausePct = Math.min(100, ((pauseLen - remaining) / pauseLen) * 100);
-      const budgetPct = (mode === 'retry') ? Math.min(100, (usedSec / budget) * 100) : pausePct;
       const off = (C * (1 - Math.max(0, remaining) / pauseLen)).toFixed(1);
 
       let title, mainLine, sub;
       if (mode === 'tpm-reset') {
-        title = 'Refreshing Groq token window — your PRD continues automatically';
-        mainLine = `<strong>${pauseLeft}</strong> until quota clears`;
-        sub = `Full-window refresh ${attempt} of ${maxAttempts} — no need to click Generate again`;
+        title = 'Refreshing Groq token window — continuing automatically';
+        mainLine = `Resuming in <strong>${pauseLeft}</strong>`;
+        sub = `Quota refresh ${attempt} — no need to click Generate again`;
       } else if (mode === 'proactive') {
-        title = 'Making room in Groq token quota before the next step';
-        mainLine = `<strong>${(quotaUsed || 0).toLocaleString()}/${quotaLimit || 6000}</strong> tokens/min used · wait <strong>${pauseLeft}</strong>`;
-        sub = 'Prevents failing after long waits — generation keeps going on its own';
+        title = 'Letting Groq\'s per-minute quota refresh';
+        mainLine = `Resuming in <strong>${pauseLeft}</strong> · <span class="dim">${(quotaUsed || 0).toLocaleString()}/${(quotaLimit || 12000).toLocaleString()} tokens used this minute</span>`;
+        sub = 'Generation keeps going on its own';
       } else {
         title = 'Groq free-tier limit — waiting automatically';
-        mainLine = `<strong>Total wait (burst ${maxAttempts} retries): up to ${budgetFmt}</strong>`;
-        sub = `Attempt ${attempt} of ${maxAttempts} in this burst — resumes on its own`;
+        mainLine = `Resuming in <strong>${pauseLeft}</strong>`;
+        sub = `Attempt ${attempt} of ${maxAttempts} — usually clears in well under a minute. Resumes on its own.`;
       }
 
       panel.style.display = 'block';
@@ -4324,19 +4324,15 @@ function waitWithCountdown(totalSec, opts = {}) {
           `</div>` +
           `<div class="rate-wait-copy">` +
             `<div class="rate-wait-title">${title}</div>` +
-            `<div class="rate-wait-times">${mainLine}</div>` +
-            (mode === 'retry' ? (
-            `<div class="rate-wait-times" style="margin-top:4px;font-weight:500;">` +
-              `<span class="dim">${usedFmt} used · </span>` +
-              `<strong class="left-highlight">${leftBudgetFmt} left worst-case</strong>` +
-              `<span class="dim"> · this pause: ${pauseLeft}</span>` +
-            `</div>`
-            ) : '') +
+            `<div class="rate-wait-times left-highlight">${mainLine}</div>` +
+            (mode === 'retry'
+              ? `<div class="rate-wait-times" style="margin-top:4px;font-weight:500;"><span class="dim">Worst case if it keeps limiting: ${budgetFmt} total</span></div>`
+              : '') +
             `<div class="rate-wait-sub">${sub}</div>` +
           `</div>` +
         `</div>` +
         `<div class="rate-wait-bar-wrap" title="Wait progress">` +
-          `<div class="rate-wait-bar" style="width:${budgetPct.toFixed(1)}%"></div>` +
+          `<div class="rate-wait-bar" style="width:${pausePct.toFixed(1)}%"></div>` +
         `</div>`;
     };
 

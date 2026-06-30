@@ -3523,6 +3523,18 @@ function localPRDAudit(brief, md) {
         issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Orders table missing status column for order tracking.', fix: 'Add status VARCHAR with values pending/confirmed/preparing/delivered/cancelled.' });
     }
 
+    // Cloudinary listed but products have no image column / upload path
+    if (/cloudinary/i.test(brief.otherTools || '') && /CREATE TABLE/i.test(text) && !/image_url|image_path|\bimages?\b\s+(text|varchar|jsonb)|cloudinary/i.test(text))
+      issues.push({ severity: 'critical', where: 'Database Schema / Media', problem: 'Cloudinary is in tools but no image_url column or upload endpoint exists — products/items cannot have images.', fix: 'Add image_url to products/menu_items, a POST upload endpoint, and CLOUDINARY_* env vars.' });
+
+    // A promised reviews/ratings feature must have a table
+    if (/review|rating/.test(featAll) && /CREATE TABLE/i.test(text) && !/CREATE TABLE\s+(reviews|ratings)/i.test(text))
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Reviews/ratings is a stated feature but there is no reviews table.', fix: 'Add a reviews table (id, user_id, product_id, rating, comment, created_at) and review endpoints.' });
+
+    // Django dev server in a production/deployment context
+    if (/manage\.py\s+runserver/i.test(text) && /(production|deploy|render|ci\/cd|github actions)/i.test(text))
+      issues.push({ severity: 'minor', where: 'Deployment', problem: 'Uses "manage.py runserver" (the development server) for production/deployment.', fix: 'Serve with gunicorn/uvicorn (e.g. gunicorn <project>.wsgi) on Render; runserver is dev-only.' });
+
     // Generic filler / boilerplate prose detection (content quality).
     const FILLER = [
       'easy to use and highly configurable',
@@ -3684,18 +3696,23 @@ async function verifyAndFixPRD(brief, md) {
     status = 'corrected';
     try {
       setProgress(97, `🛠 Fixing ${critical.length} issue${critical.length > 1 ? 's' : ''} found…`, '');
-      const fixSys = 'You are a precise editor. You fix only the listed issues and preserve everything else exactly. Output only Markdown.';
+      const fixSys = 'You are a precise editor. You fix only the listed issues and preserve everything else exactly. Output only Markdown — the COMPLETE corrected document, never truncated.';
       const fixUser = buildFixPrompt(brief, md, critical);
-      const fix = await callGroq({
-        systemPrompt: fixSys,
-        userPrompt: fixUser,
-        maxTokens: budgetMaxTokens(fixSys, fixUser, MAX_TOKENS),
-        temperature: 0.15,
-        model: AUDIT_MODEL
-      });
+      const fixArgs = { systemPrompt: fixSys, userPrompt: fixUser, maxTokens: budgetMaxTokens(fixSys, fixUser, MAX_TOKENS), temperature: 0.15 };
+      // A full-document rewrite needs the strong model for fidelity; only fall
+      // back to the fast model if the strong one is rate-limited.
+      let fix;
+      try {
+        fix = await callGroq({ ...fixArgs, model: MODEL });
+      } catch (e1) {
+        console.warn('Fix on main model failed, retrying on fast model:', e1);
+        fix = await callGroq({ ...fixArgs, model: AUDIT_MODEL });
+      }
       tokens += fix.usage?.total_tokens || 0;
-      if (fix.text && fix.text.trim().length > md.length * 0.5) {
-        md = fixSqlTableOrder(fix.text.trim());
+      // Require a near-complete rewrite (≥ 85% of original) so a truncated fix
+      // can never silently delete half the PRD.
+      if (fix.text && fix.text.trim().length > md.length * 0.85) {
+        md = postProcessPRD(brief, fix.text.trim());
         fixedCount = critical.length;
         // Re-run the free local audit to confirm the fix actually resolved them
         const remaining = localPRDAudit(brief, md).filter(i => (i.severity || 'critical') === 'critical');
@@ -3877,7 +3894,7 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     clearInterval(progressInterval);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    rawMarkdown = fixSqlTableOrder(stage2.text);
+    rawMarkdown = postProcessPRD(brief, stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
     // ── STAGE 3: cross-check the PRD against the user's inputs ──
@@ -4000,6 +4017,23 @@ function fixSqlTableOrder(md) {
       return full;
     }
   });
+}
+
+// Deterministic, token-free corrections applied to EVERY generated PRD.
+// These never depend on the model, so the mechanical errors (SQL order,
+// Vite vars in a Next.js project) are fixed even when the audit/fix pass
+// is rate-limited or skipped.
+function postProcessPRD(brief, md) {
+  if (!md) return md;
+  let out = fixSqlTableOrder(md);
+  const isNext = /next\.js|nextjs|\bnext\b/i.test((brief && brief.frontend) || '');
+  if (isNext) {
+    // Vite env vars do not exist in Next.js — drop any VITE_* env-var table rows…
+    out = out.replace(/^\s*\|\s*`?VITE_[A-Z0-9_]*`?\s*\|[^\n]*\n/gim, '');
+    // …and rewrite any remaining inline VITE_FOO references to NEXT_PUBLIC_FOO.
+    out = out.replace(/\bVITE_([A-Z0-9_]+)\b/g, 'NEXT_PUBLIC_$1');
+  }
+  return out;
 }
 
 function reorderCreateTables(sql) {

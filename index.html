@@ -3193,7 +3193,7 @@ async function waitForGroqQuota() {
   const limit = GROQ_LIMITS.tpmLimitPerMin;
   const safety = GROQ_LIMITS.tpmSafetyMarginTokens;
   let rounds = 0;
-  const maxRounds = 20;
+  const maxRounds = 3; // local-window self-clears in ~1 round; cap keeps it short
 
   while (rounds < maxRounds) {
     const used = getTokensUsedLastMinute();
@@ -3250,44 +3250,45 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     })
   });
 
-  // ── 429: Groq rate limit hit → exponential backoff, then full TPM refresh ──
+  // ── 429: rate limited. Distinguish per-MINUTE (wait it out) from per-DAY (bail). ──
   if (response.status === 429) {
-    if (retryCount >= GROQ_LIMITS.maxRetries) {
-      if (tpmResetCycle >= GROQ_LIMITS.maxTpmResetCycles) {
-        const mins = Math.round((_rateLimitSession.elapsedSec || 0) / 60);
-        throw new Error(
-          `Groq free tier is still rate-limiting after ~${mins || 10}+ min of automatic waits. ` +
-          `Wait 3 more minutes, then click "Generate Full PRD" again — your tech stack above is still saved.`
-        );
-      }
-      const resetSec = GROQ_LIMITS.tpmWindowWaitSec;
-      if (!_rateLimitSession.budgetSec) _rateLimitSession.budgetSec = estimateTotalWaitAllAttempts();
-      setProgress(
-        null,
-        `⏳ Refreshing Groq token window (${formatWaitTime(resetSec)}) — then continuing automatically…`,
-        undefined
-      );
-      await waitWithCountdown(resetSec, {
-        attempt: tpmResetCycle + 1,
-        maxAttempts: GROQ_LIMITS.maxTpmResetCycles,
-        totalBudgetSec: resetSec,
-        mode: 'tpm-reset'
-      });
-      // Reset per-burst retry counter — TPM window should be clear now.
-      return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, 0, tpmResetCycle + 1);
-    }
-    // Try to read Retry-After header from Groq, else use capped exponential backoff
-    const retryAfter = response.headers.get('retry-after');
-    const rawWaitMs = retryAfter
-      ? parseInt(retryAfter, 10) * 1000
-      : GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount);
-    const waitMs = Math.min(rawWaitMs, GROQ_LIMITS.maxBackoffMs);
+    const err = await response.json().catch(() => ({}));
+    const msg = err.error?.message || '';
+    const retryAfterHeader = response.headers.get('retry-after');
 
-    const waitSec = Math.ceil(waitMs / 1000);
-    if (!_rateLimitSession.budgetSec) {
-      _rateLimitSession.budgetSec = estimateTotalWaitAllAttempts();
+    // How long Groq actually wants us to wait.
+    let serverWaitSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
+    if (!serverWaitSec || isNaN(serverWaitSec)) serverWaitSec = parseGroqRetrySeconds(msg);
+
+    // DAILY limits (tokens/requests per day) never clear by waiting a minute —
+    // looping would run "forever". Detect them and stop with a clear message.
+    const isDaily = /per\s*day|tokens per day|requests per day|\bTPD\b|\bRPD\b/i.test(msg)
+                    || (serverWaitSec && serverWaitSec > 180);
+    if (isDaily) {
+      const when = serverWaitSec ? `~${formatWaitTime(serverWaitSec)}` : 'around 00:00 UTC';
+      throw new Error(
+        `Groq's free-tier DAILY limit has been reached, so it can't continue right now (resets in ${when}). ` +
+        `You can wait and try later, or add a different Groq API key via the key button in the header. ` +
+        `Your idea and tech stack are saved — nothing is lost.`
+      );
     }
-    const totalBudget = _rateLimitSession.budgetSec;
+
+    // Hard ceiling: never make the user wait more than 5 min total for one PRD.
+    const MAX_TOTAL_WAIT_SEC = 300;
+    if ((_rateLimitSession.elapsedSec || 0) >= MAX_TOTAL_WAIT_SEC) {
+      const mins = Math.round((_rateLimitSession.elapsedSec || 0) / 60);
+      throw new Error(
+        `Groq kept rate-limiting for ${mins} min straight — this is almost always the free-tier per-day cap. ` +
+        `Wait a few minutes (or use a different API key via the header), then click Generate again. Your inputs are saved.`
+      );
+    }
+
+    // Per-minute limit: wait the server's stated time (capped to 2 min), else a
+    // capped exponential fallback. Then retry — the minute window clears.
+    const fallbackSec = Math.ceil(Math.min(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount), GROQ_LIMITS.maxBackoffMs) / 1000);
+    const waitSec = (serverWaitSec && serverWaitSec > 0) ? Math.min(serverWaitSec, 120) : fallbackSec;
+
+    if (!_rateLimitSession.budgetSec) _rateLimitSession.budgetSec = estimateTotalWaitAllAttempts();
     const phaseTag = (_genPhase === 'understand') ? 'understanding your idea' : 'generating PRD';
     setProgress(
       null,
@@ -3296,8 +3297,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     );
     await waitWithCountdown(waitSec, {
       attempt: retryCount + 1,
-      maxAttempts: GROQ_LIMITS.maxRetries,
-      totalBudgetSec: totalBudget,
+      maxAttempts: Math.max(GROQ_LIMITS.maxRetries, retryCount + 1),
+      totalBudgetSec: _rateLimitSession.budgetSec,
       mode: 'retry'
     });
     return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, retryCount + 1, tpmResetCycle);
@@ -4307,6 +4308,19 @@ function formatWaitTime(sec) {
   const mm = Math.floor(s / 60);
   const ss = s % 60;
   return mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${s}s`;
+}
+
+// Parse Groq's "Please try again in 1h2m3.5s" / "2m30s" / "45s" → seconds.
+function parseGroqRetrySeconds(msg) {
+  if (!msg) return null;
+  const m = msg.match(/try again in\s+([0-9hms.\s]+)/i);
+  if (!m) return null;
+  const str = m[1];
+  let total = 0, found = false;
+  const h = str.match(/([\d.]+)\s*h/i); if (h) { total += parseFloat(h[1]) * 3600; found = true; }
+  const mi = str.match(/([\d.]+)\s*m/i); if (mi) { total += parseFloat(mi[1]) * 60; found = true; }
+  const se = str.match(/([\d.]+)\s*s/i); if (se) { total += parseFloat(se[1]); found = true; }
+  return found ? Math.ceil(total) : null;
 }
 
 // Worst-case seconds if every retry in one burst hits 429 (each wait is capped).

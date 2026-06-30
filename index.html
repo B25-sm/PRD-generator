@@ -3250,7 +3250,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     })
   });
 
-  // ── 429: rate limited. Distinguish per-MINUTE (wait it out) from per-DAY (bail). ──
+  // ── 429: rate limited. Wait out reasonable limits with an animated timer;
+  //    only bail (banner) for truly long, hours-scale daily caps. ──
   if (response.status === 429) {
     const err = await response.json().catch(() => ({}));
     const msg = err.error?.message || '';
@@ -3260,12 +3261,12 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     let serverWaitSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
     if (!serverWaitSec || isNaN(serverWaitSec)) serverWaitSec = parseGroqRetrySeconds(msg);
 
-    // DAILY limits (tokens/requests per day) never clear by waiting a minute —
-    // looping would run "forever". Detect them and stop with a clear message.
-    const isDaily = /per\s*day|tokens per day|requests per day|\bTPD\b|\bRPD\b/i.test(msg)
-                    || (serverWaitSec && serverWaitSec > 180);
-    if (isDaily) {
-      const when = serverWaitSec ? `~${formatWaitTime(serverWaitSec)}` : 'around 00:00 UTC';
+    const MAX_AUTO_WAIT_SEC  = 15 * 60; // wait out a single pause up to 15 min (animated)
+    const MAX_TOTAL_AUTO_SEC = 18 * 60; // cumulative cap across pauses before we bail
+
+    // Truly long (hours-scale) → real daily cap → stop with a clear banner.
+    if (serverWaitSec && serverWaitSec > MAX_AUTO_WAIT_SEC) {
+      const when = `~${formatWaitTime(serverWaitSec)}`;
       throw new Error(
         `Groq's free-tier DAILY limit has been reached, so it can't continue right now (resets in ${when}). ` +
         `You can wait and try later, or add a different Groq API key via the key button in the header. ` +
@@ -3273,9 +3274,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       );
     }
 
-    // Hard ceiling: never make the user wait more than 5 min total for one PRD.
-    const MAX_TOTAL_WAIT_SEC = 300;
-    if ((_rateLimitSession.elapsedSec || 0) >= MAX_TOTAL_WAIT_SEC) {
+    // Cumulative safety net so it can never truly run "forever".
+    if ((_rateLimitSession.elapsedSec || 0) >= MAX_TOTAL_AUTO_SEC) {
       const mins = Math.round((_rateLimitSession.elapsedSec || 0) / 60);
       throw new Error(
         `Groq kept rate-limiting for ${mins} min straight — this is almost always the free-tier per-day cap. ` +
@@ -3283,23 +3283,23 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       );
     }
 
-    // Per-minute limit: wait the server's stated time (capped to 2 min), else a
-    // capped exponential fallback. Then retry — the minute window clears.
+    // Wait the server's stated time (animated), else a capped exponential fallback.
     const fallbackSec = Math.ceil(Math.min(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount), GROQ_LIMITS.maxBackoffMs) / 1000);
-    const waitSec = (serverWaitSec && serverWaitSec > 0) ? Math.min(serverWaitSec, 120) : fallbackSec;
+    const waitSec = (serverWaitSec && serverWaitSec > 0) ? Math.min(serverWaitSec, MAX_AUTO_WAIT_SEC) : fallbackSec;
+    const longWait = waitSec > 75; // a known, longer refill → show the calm full-timer animation
 
     if (!_rateLimitSession.budgetSec) _rateLimitSession.budgetSec = estimateTotalWaitAllAttempts();
     const phaseTag = (_genPhase === 'understand') ? 'understanding your idea' : 'generating PRD';
     setProgress(
       null,
-      `⏳ Groq rate limit while ${phaseTag} — resuming in ${formatWaitTime(waitSec)} (auto)`,
+      `⏳ Groq quota refills in ${formatWaitTime(waitSec)} while ${phaseTag} — continuing automatically…`,
       undefined
     );
     await waitWithCountdown(waitSec, {
       attempt: retryCount + 1,
       maxAttempts: Math.max(GROQ_LIMITS.maxRetries, retryCount + 1),
-      totalBudgetSec: _rateLimitSession.budgetSec,
-      mode: 'retry'
+      totalBudgetSec: longWait ? waitSec : _rateLimitSession.budgetSec,
+      mode: longWait ? 'reset-wait' : 'retry'
     });
     return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, retryCount + 1, tpmResetCycle);
   }
@@ -4371,8 +4371,8 @@ function waitWithCountdown(totalSec, opts = {}) {
         const cls = p < pipActive ? 'done' : (p === pipActive ? 'active' : '');
         pips += `<span class="attempt-pip ${cls}"></span>`;
       }
-      const attemptLabel = (mode === 'tpm-reset')
-        ? `Quota refresh ${attempt}`
+      const attemptLabel = (mode === 'tpm-reset' || mode === 'reset-wait')
+        ? `Auto-resuming when ready`
         : `Attempt ${attempt} of ${maxAttempts}`;
       const attemptRow =
         `<div class="attempt-track">` +
@@ -4382,7 +4382,13 @@ function waitWithCountdown(totalSec, opts = {}) {
         `</div>`;
 
       let title, mainLine, sub;
-      if (mode === 'tpm-reset') {
+      if (mode === 'reset-wait') {
+        title = 'Groq free-tier quota refilling — your PRD continues automatically';
+        mainLine = `Resuming in <strong>${pauseLeft}</strong>`;
+        sub = (_genPhase === 'understand')
+          ? `You'll review &amp; edit the tech stack the moment this finishes — nothing generates without you.`
+          : `Sit back — it picks up right where it left off when the timer ends. No need to click again.`;
+      } else if (mode === 'tpm-reset') {
         title = 'Refreshing Groq token window — continuing automatically';
         mainLine = `Resuming in <strong>${pauseLeft}</strong>`;
         sub = `No need to click Generate again — it resumes on its own`;

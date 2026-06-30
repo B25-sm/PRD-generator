@@ -3407,6 +3407,62 @@ function classifyTechValue(value) {
   return cats;
 }
 
+// Levenshtein edit distance (small strings only).
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let cur = new Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n];
+}
+
+// Flattened, deduped list of every known tech term (single-word only — multi-word
+// terms are matched separately and are unlikely to be typo'd into a single token).
+let _ALL_TERMS = null;
+function allKnownTerms() {
+  if (_ALL_TERMS) return _ALL_TERMS;
+  const set = new Set();
+  for (const terms of Object.values(TECH_SETS)) {
+    for (const t of terms) if (!/\s/.test(t) && t.length >= 4) set.add(t.toLowerCase());
+  }
+  _ALL_TERMS = [...set];
+  return _ALL_TERMS;
+}
+
+// Detect a likely typo: a value token that's unrecognized but very close to a real
+// term. Returns the suggested correction string, or '' if none. Biases toward terms
+// valid for the field's own category.
+function suggestTechTypo(fieldCat, value) {
+  const tokens = (value || '').toLowerCase().match(/[a-z0-9.+#-]+/g) || [];
+  const ownTerms = (fieldCat && TECH_SETS[fieldCat]) ? TECH_SETS[fieldCat].filter(t => !/\s/.test(t)) : [];
+  for (const tok of tokens) {
+    if (tok.length < 4) continue;
+    if (allKnownTerms().includes(tok)) continue; // exact known token → not a typo
+    // Allowed edit distance scales gently with length: 1 for short, 2 for longer.
+    const maxDist = tok.length >= 7 ? 2 : 1;
+    let best = '', bestDist = Infinity;
+    const pools = [ownTerms, allKnownTerms()];
+    for (const pool of pools) {
+      for (const term of pool) {
+        if (Math.abs(term.length - tok.length) > maxDist) continue;
+        const d = editDistance(tok, term);
+        if (d < bestDist) { bestDist = d; best = term; }
+      }
+      if (bestDist <= maxDist) break; // prefer a same-category suggestion
+    }
+    if (best && bestDist <= maxDist) return best;
+  }
+  return '';
+}
+
 // Returns an error message string if the field's value clearly belongs to other
 // categories only, otherwise '' (valid / unknown / empty).
 function techFieldError(fieldCat, value) {
@@ -3414,8 +3470,13 @@ function techFieldError(fieldCat, value) {
   if (!v) return '';
   if (!fieldCat || !TECH_SETS[fieldCat]) return '';   // unknown/free-form field → never block
   const cats = classifyTechValue(v);
-  if (cats.size === 0) return '';        // unrecognized free text → allow
   if (cats.has(fieldCat)) return '';     // contains a valid term for this field → OK
+  if (cats.size === 0) {
+    // Unrecognized — but is it a near-miss typo of a real tech? Catch "spting"→spring.
+    const sug = suggestTechTypo(fieldCat, v);
+    if (sug) return `“${v}” isn’t a known technology — did you mean “${sug}”?`;
+    return '';                            // genuine niche/free-form value → allow
+  }
   const others = [...cats].map(c => CAT_LABEL[c]).join(' / ');
   return `“${v}” looks like ${others}, not ${CAT_LABEL[fieldCat]}. Enter ${exampleFor(fieldCat)}.`;
 }

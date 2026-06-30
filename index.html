@@ -426,6 +426,43 @@ textarea::placeholder { color: var(--text-muted); }
   50%      { opacity: 0.35; transform: scale(0.7); }
 }
 
+/* ─── Circular rate-limit countdown timer ─── */
+.countdown-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--accent2);
+  background: rgba(245, 80, 54, 0.08);
+  border: 1px solid rgba(245, 80, 54, 0.25);
+  border-radius: 100px;
+  padding: 3px 12px 3px 5px;
+}
+.countdown-ring { transform: rotate(-90deg); flex: none; }
+.countdown-ring .ring-bg {
+  fill: none;
+  stroke: rgba(245, 80, 54, 0.18);
+  stroke-width: 2.5;
+}
+.countdown-ring .ring-fg {
+  fill: none;
+  stroke: var(--accent2);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+  filter: drop-shadow(0 0 3px rgba(245, 80, 54, 0.5));
+}
+.countdown-num { min-width: 30px; text-align: center; letter-spacing: 0.02em; }
+.countdown-note {
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-left: 1px solid rgba(245, 80, 54, 0.25);
+  padding-left: 8px;
+}
+
 .progress-bar-wrap {
   background: var(--surface2);
   border-radius: 100px;
@@ -1641,9 +1678,11 @@ const GROQ_LIMITS = {
   maxReqPerHour: 20,        // conservative hourly cap (Groq allows 14,400/day)
   maxReqPerDay: 100,        // daily cap — 100 PRDs/day uses ~1.2M tokens, well under daily limit
 
-  // Retry settings for 429 responses
-  maxRetries: 3,
-  baseRetryDelayMs: 15000,  // 15s base, doubles each retry (15 → 30 → 60)
+  // Retry settings for 429 responses. We honour Groq's Retry-After header when
+  // present; otherwise back off exponentially. More retries = we'd rather wait
+  // (with a visible countdown) than skip the cross-check or repair.
+  maxRetries: 5,
+  baseRetryDelayMs: 15000,  // 15s base, doubles each retry (15 → 30 → 60 → 120 → 240)
 };
 
 const STORAGE_KEY_API      = 'prd_groq_key';
@@ -3064,10 +3103,10 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const waitSec = Math.ceil(waitMs / 1000);
     setProgress(
       null,
-      `⏳ Groq rate limit hit — auto-retrying (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})…`,
+      `⏳ Groq rate limit reached — waiting, then continuing automatically (attempt ${retryCount + 1}/${GROQ_LIMITS.maxRetries})`,
       ''
     );
-    await waitWithCountdown(waitSec);
+    await waitWithCountdown(waitSec, 'resuming…');
     return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, retryCount + 1);
   }
 
@@ -3657,77 +3696,186 @@ function parseAuditJSON(text) {
   }
 }
 
-// Orchestrates local + Groq audit and (if needed) one fix pass.
-// Returns { markdown, tokens, status, issues, fixedCount }.
+// Split a PRD into its top-level "## " sections (slices are contiguous, so
+// joining them reproduces the original exactly).
+function splitPRDSections(md) {
+  const re = /^##\s+.*$/gm;
+  const idx = [];
+  let m;
+  while ((m = re.exec(md)) !== null) idx.push({ pos: m.index, heading: m[0].replace(/^##\s+/, '').trim() });
+  if (!idx.length) return [{ heading: '', text: md }];
+  const parts = [];
+  if (idx[0].pos > 0) parts.push({ heading: '', text: md.slice(0, idx[0].pos) });
+  for (let i = 0; i < idx.length; i++) {
+    const end = (i + 1 < idx.length) ? idx[i + 1].pos : md.length;
+    parts.push({ heading: idx[i].heading, text: md.slice(idx[i].pos, end) });
+  }
+  return parts;
+}
+
+// Decide which section(s) an audit issue belongs to, so we can fix ONLY those.
+function routeIssueToSections(parts, issue) {
+  const where = (issue.where || '').toLowerCase().replace(/^\d+\.\s*/, '');
+  const blob = ((issue.where || '') + ' ' + (issue.problem || '') + ' ' + (issue.fix || '')).toLowerCase();
+  const targets = new Set();
+  const add = (kw) => { const i = parts.findIndex(p => p.heading.toLowerCase().includes(kw)); if (i >= 0) targets.add(i); };
+
+  // 1) Direct heading-name match against the issue's "where".
+  parts.forEach((p, i) => {
+    const h = p.heading.toLowerCase().replace(/^\d+\.\s*/, '');
+    if (h && where && (h.includes(where) || where.includes(h))) targets.add(i);
+  });
+
+  // 2) Keyword routing for common error classes.
+  if (/endpoint|api|rest|route/.test(blob))                              add('api');
+  if (/schema|table|column|order_items|image_url|database|ddl|foreign key/.test(blob)) add('database');
+  if (/\benv\b|vite_|next_public|variable|secret/.test(blob))            add('environment');
+  if (/auth|token|jwt|login|session|nextauth|passport/.test(blob))       add('authentication');
+  if (/state|redux|context|zustand/.test(blob)) { add('state'); add('frontend'); }
+  if (/architecture|microservice|monolith|diagram/.test(blob))           add('architecture');
+  if (/why chosen|filler|rationale|tech stack/.test(blob))               add('tech stack');
+  if (/deploy|runserver|gunicorn|ci\/cd|docker/.test(blob))              add('deployment');
+
+  // 3) A dropped tool spans several sections.
+  if (/stripe|payment/.test(blob))   { add('api'); add('database'); add('environment'); add('tech stack'); }
+  if (/cloudinary|image/.test(blob)) { add('database'); add('environment'); add('tech stack'); }
+  if (/sendgrid|email/.test(blob))   { add('environment'); add('tech stack'); }
+
+  return [...targets];
+}
+
+function buildSectionFixPrompt(brief, sectionText, issues) {
+  const dom = getDomain(brief.domain || 'web');
+  const stackLines = dom.stackFields.map(f => `- ${f.label}: ${brief[f.key] || '(not set)'}`).join('\n');
+  const issueLines = issues.map((i, n) => `${n + 1}. ${i.problem} → FIX: ${i.fix}`).join('\n');
+  return `You are correcting ONE section of a PRD. Apply every fix below and return ONLY this section's corrected Markdown — same heading, same professional style. You MAY add rows, tables, columns, or endpoints WITHIN this section as the fixes require. Do NOT add other sections or commentary.
+
+USER INPUTS (source of truth):
+Project: ${brief.projectName}
+Domain: ${dom.label}
+${stackLines}
+Tools: ${brief.otherTools || 'None'}
+
+FIXES TO APPLY TO THIS SECTION:
+${issueLines}
+
+SECTION TO CORRECT:
+"""
+${sectionText}
+"""
+
+Output ONLY the corrected section Markdown, starting with its "## " heading. No code fence around the whole section.`;
+}
+
+async function fixSection(brief, sectionText, issues) {
+  const sys = 'You are a precise PRD editor. You correct only the given section and output only that section in Markdown.';
+  const user = buildSectionFixPrompt(brief, sectionText, issues);
+  const res = await callGroq({
+    systemPrompt: sys,
+    userPrompt: user,
+    maxTokens: budgetMaxTokens(sys, user, 2400),
+    temperature: 0.15,
+    model: MODEL   // high model does the repair
+  });
+  let out = (res.text || '').trim();
+  if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
+  return { text: out, tokens: res.usage?.total_tokens || 0 };
+}
+
+// Stage 3 — AI verification & repair LOOP, entirely on the high model.
+// Audits the PRD, fixes ONLY the broken sections (each request stays well under
+// Groq's token ceiling), then RE-AUDITS — repeating until the document is clean
+// or we hit the round cap. Rate-limit waits show a live countdown (see callGroq).
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
-  let issues = localPRDAudit(brief, md);     // free
-  let status = 'verified';
-  let fixedCount = 0;
+  let totalFixed = 0;
+  let lastIssues = [];
+  const MAX_ROUNDS = 3;
 
-  // Groq semantic audit (best-effort)
-  try {
-    setProgress(94, '🔎 Cross-checking against your inputs…', '');
-    const auditSys = 'You are a strict, precise QA auditor. You output only valid raw JSON. You never fabricate issues.';
-    const auditUser = buildAuditPrompt(brief, md);
-    const audit = await callGroq({
-      systemPrompt: auditSys,
-      userPrompt: auditUser,
-      maxTokens: budgetMaxTokens(auditSys, auditUser, 1500),
-      temperature: 0.0,
-      model: AUDIT_MODEL
-    });
-    tokens += audit.usage?.total_tokens || 0;
-    const parsed = parseAuditJSON(audit.text);
-    if (parsed && parsed.issues.length) {
-      // merge, prefer critical
-      issues = issues.concat(parsed.issues.filter(i => i && i.problem));
-    }
-  } catch (e) {
-    console.warn('Groq audit skipped:', e);
-    // If we have no local issues and the audit failed, we can't fully verify.
-    if (issues.length === 0) status = 'unverified';
-  }
-
-  const critical = issues.filter(i => (i.severity || 'critical') === 'critical');
-
-  // One fix pass if there are critical issues
-  if (critical.length) {
-    status = 'corrected';
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    // ── Audit on the HIGH model, plus the free local audit as an extra signal ──
+    let issues = localPRDAudit(brief, md);
+    let auditOk = true;
     try {
-      setProgress(97, `🛠 Fixing ${critical.length} issue${critical.length > 1 ? 's' : ''} found…`, '');
-      const fixSys = 'You are a precise editor. You fix only the listed issues and preserve everything else exactly. Output only Markdown — the COMPLETE corrected document, never truncated.';
-      const fixUser = buildFixPrompt(brief, md, critical);
-      const fixArgs = { systemPrompt: fixSys, userPrompt: fixUser, maxTokens: budgetMaxTokens(fixSys, fixUser, MAX_TOKENS), temperature: 0.15 };
-      // A full-document rewrite needs the strong model for fidelity; only fall
-      // back to the fast model if the strong one is rate-limited.
-      let fix;
-      try {
-        fix = await callGroq({ ...fixArgs, model: MODEL });
-      } catch (e1) {
-        console.warn('Fix on main model failed, retrying on fast model:', e1);
-        fix = await callGroq({ ...fixArgs, model: AUDIT_MODEL });
-      }
-      tokens += fix.usage?.total_tokens || 0;
-      // Require a near-complete rewrite (≥ 85% of original) so a truncated fix
-      // can never silently delete half the PRD.
-      if (fix.text && fix.text.trim().length > md.length * 0.85) {
-        md = postProcessPRD(brief, fix.text.trim());
-        fixedCount = critical.length;
-        // Re-run the free local audit to confirm the fix actually resolved them
-        const remaining = localPRDAudit(brief, md).filter(i => (i.severity || 'critical') === 'critical');
-        status = remaining.length ? 'partial' : 'corrected';
-        issues = remaining.length ? remaining : [];
-      } else {
-        status = 'flagged'; // fix produced nothing usable; keep original + warn
-      }
+      setProgress(round === 1 ? 92 : 95, `🔎 Cross-checking against your inputs (pass ${round}/${MAX_ROUNDS})…`, '');
+      const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
+      const auditUser = buildAuditPrompt(brief, md);
+      const audit = await callGroq({
+        systemPrompt: auditSys,
+        userPrompt: auditUser,
+        maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
+        temperature: 0.0,
+        model: MODEL
+      });
+      tokens += audit.usage?.total_tokens || 0;
+      const parsed = parseAuditJSON(audit.text);
+      if (parsed && parsed.issues.length) issues = issues.concat(parsed.issues.filter(i => i && i.problem));
     } catch (e) {
-      console.warn('Groq fix pass failed:', e);
-      status = 'flagged';
+      console.warn(`Audit pass ${round} failed:`, e);
+      auditOk = false;
+      if (issues.length === 0) {
+        // Couldn't reach the auditor and nothing local — report honestly.
+        return { markdown: md, tokens, status: totalFixed ? 'corrected' : 'unverified', issues: [], fixedCount: totalFixed };
+      }
     }
+
+    // De-dupe issues.
+    const seen = new Set();
+    issues = issues.filter(i => { const k = (i.where || '') + '|' + (i.problem || ''); if (seen.has(k)) return false; seen.add(k); return true; });
+    lastIssues = issues;
+    const critical = issues.filter(i => (i.severity || 'critical') === 'critical');
+
+    // ── Clean? Done. ──
+    if (!critical.length) {
+      return { markdown: md, tokens, status: totalFixed ? 'corrected' : (auditOk ? 'verified' : 'corrected'), issues, fixedCount: totalFixed };
+    }
+
+    // ── Section-targeted repair ──
+    setProgress(96, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''} (pass ${round}/${MAX_ROUNDS})…`, '');
+    const parts = splitPRDSections(md);
+    const bucket = new Map();
+    critical.forEach(issue => {
+      routeIssueToSections(parts, issue).forEach(ix => {
+        if (!bucket.has(ix)) bucket.set(ix, []);
+        bucket.get(ix).push(issue);
+      });
+    });
+
+    if (!bucket.size) {
+      // Could not localise the issues to any section → stop, report honestly.
+      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
+    }
+
+    let appliedAny = false;
+    for (const [ix, sectionIssues] of bucket) {
+      try {
+        const fixed = await fixSection(brief, parts[ix].text, sectionIssues);
+        tokens += fixed.tokens;
+        // Accept only a plausible corrected section (starts with ## and isn't truncated away).
+        if (fixed.text && /^##\s+/.test(fixed.text) && fixed.text.length > parts[ix].text.length * 0.5) {
+          parts[ix].text = '\n' + fixed.text.trim() + '\n';
+          appliedAny = true;
+        }
+      } catch (e) {
+        console.warn('Section fix failed for', parts[ix].heading, e);
+      }
+    }
+
+    md = postProcessPRD(brief, parts.map(p => p.text).join(''));
+    totalFixed += critical.length;
+
+    if (!appliedAny) {
+      // Nothing could be applied this round (e.g. repeated rate-limit) → report.
+      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
+    }
+    // else: loop and RE-AUDIT the repaired document.
   }
 
-  return { markdown: md, tokens, status, issues, fixedCount };
+  // Rounds exhausted — final free check to set an honest badge.
+  const remaining = localPRDAudit(brief, md).filter(i => (i.severity || 'critical') === 'critical');
+  return remaining.length
+    ? { markdown: md, tokens, status: 'partial', issues: remaining, fixedCount: totalFixed }
+    : { markdown: md, tokens, status: totalFixed ? 'corrected' : 'verified', issues: lastIssues.filter(i => (i.severity || 'critical') !== 'critical'), fixedCount: totalFixed };
 }
 
 // Build the verification badge shown in the output toolbar.
@@ -3938,9 +4086,12 @@ function setProgress(pct, label, meta) {
   if (meta  !== undefined) document.getElementById('progress-meta').textContent = meta;
 }
 
-// Wait `totalSec` seconds while showing a live countdown pill in the progress meta.
-function waitWithCountdown(totalSec) {
+// Wait `totalSec` seconds while showing a live circular countdown timer in the
+// progress meta. Used when Groq rate-limits, so we transparently wait it out.
+function waitWithCountdown(totalSec, note) {
   const metaEl = document.getElementById('progress-meta');
+  const total = Math.max(1, totalSec);
+  const R = 9, C = 2 * Math.PI * R;
   return new Promise(resolve => {
     let remaining = totalSec;
     const render = () => {
@@ -3948,7 +4099,16 @@ function waitWithCountdown(totalSec) {
       const mm = Math.floor(remaining / 60);
       const ss = remaining % 60;
       const txt = mm > 0 ? `${mm}:${String(ss).padStart(2, '0')}` : `${ss}s`;
-      metaEl.innerHTML = `<span class="countdown-pill"><span class="countdown-dot"></span>${txt}</span>`;
+      const off = (C * (1 - Math.max(0, remaining) / total)).toFixed(1);
+      metaEl.innerHTML =
+        `<span class="countdown-timer" title="Waiting out Groq's rate limit, then continuing automatically">` +
+          `<svg class="countdown-ring" width="22" height="22" viewBox="0 0 22 22">` +
+            `<circle class="ring-bg" cx="11" cy="11" r="${R}"></circle>` +
+            `<circle class="ring-fg" cx="11" cy="11" r="${R}" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${off}"></circle>` +
+          `</svg>` +
+          `<span class="countdown-num">${txt}</span>` +
+          (note ? `<span class="countdown-note">${note}</span>` : '') +
+        `</span>`;
     };
     render();
     const tick = setInterval(() => {

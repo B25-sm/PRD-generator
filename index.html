@@ -1745,11 +1745,10 @@ const GROQ_LIMITS = {
   // we wait a full TPM window and start again — we do NOT give up after ~8 min.
   maxRetries: 8,
   baseRetryDelayMs: 15000,  // 15s base, doubles each retry
-  maxTpmResetCycles: 15,    // up to 15 × 90s TPM refreshes before hard fail (~22 min extra)
-  tpmWindowWaitSec: 90,     // Groq free-tier TPM resets per ~60s window; 90s is safe
-  tpmLimitPerMin: 6000,     // llama-3.3-70b-versatile free tier
-  tpmSafetyMarginTokens: 600,
-  minGapLargeCallMs: 62000, // min gap between large 70B calls when quota is tight
+  maxTpmResetCycles: 15,    // up to 15 × 65s TPM refreshes before hard fail
+  tpmWindowWaitSec: 65,     // Groq TPM resets per 60s window; 65s is a safe refresh
+  tpmLimitPerMin: 12000,    // llama-3.3-70b-versatile free-tier TPM (matches tpmLimit)
+  tpmSafetyMarginTokens: 800,
 };
 
 const STORAGE_KEY_API      = 'prd_groq_key';
@@ -3141,8 +3140,11 @@ function budgetMaxTokens(systemPrompt, userPrompt, desiredMax) {
 //  GROQ CALL — with exponential backoff retry on 429
 //  and auto-shrink retry on 413 (request too large for TPM)
 // ═══════════════════════════════════════════════════════════
-// Proactively pause before a large 70B call when the rolling token window is full.
-async function waitForGroqQuota(neededTokens) {
+// Proactively pause ONLY when the rolling token window is ALREADY near full from
+// prior calls. We never block a fresh request based on its own size — Groq judges
+// that at call time (and the 429/413 handlers cover real over-limit cases). This
+// is what prevents needless waits when no tokens have been used yet.
+async function waitForGroqQuota() {
   const limit = GROQ_LIMITS.tpmLimitPerMin;
   const safety = GROQ_LIMITS.tpmSafetyMarginTokens;
   let rounds = 0;
@@ -3150,18 +3152,19 @@ async function waitForGroqQuota(neededTokens) {
 
   while (rounds < maxRounds) {
     const used = getTokensUsedLastMinute();
-    if (used + neededTokens + safety <= limit) return;
+    // Room left in this minute → go. (Only true usage counts, not the next call.)
+    if (used + safety < limit) return;
 
     const log = getTokenLog().filter(e => Date.now() - e.ts < 60 * 1000);
     let waitSec = GROQ_LIMITS.tpmWindowWaitSec;
     if (log.length) {
       const oldest = Math.min(...log.map(e => e.ts));
-      waitSec = Math.max(12, Math.ceil((oldest + 60_000 - Date.now()) / 1000) + 3);
+      waitSec = Math.max(8, Math.ceil((oldest + 60_000 - Date.now()) / 1000) + 2);
     }
 
     setProgress(
       null,
-      `⏳ Token quota ${used.toLocaleString()}/${limit}/min — waiting ${formatWaitTime(waitSec)} before next step…`,
+      `⏳ Token quota ${used.toLocaleString()}/${limit}/min used — waiting ${formatWaitTime(waitSec)} for it to refresh…`,
       undefined
     );
     await waitWithCountdown(waitSec, {
@@ -3177,11 +3180,10 @@ async function waitForGroqQuota(neededTokens) {
 }
 
 async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3, model = MODEL }, retryCount = 0, tpmResetCycle = 0) {
-  // Proactively wait so back-to-back 70B calls (generate → audit → fix) don't
-  // burn the user's wait time on 429 retries and then fail anyway.
+  // Pause ONLY if the rolling minute is already near-full from previous 70B calls
+  // (generate → audit → fix). A fresh window proceeds immediately.
   if (model === MODEL) {
-    const est = estimateTokens(systemPrompt) + estimateTokens(userPrompt) + Math.min(maxTokens, 4000);
-    await waitForGroqQuota(est);
+    await waitForGroqQuota();
   }
 
   const response = await fetch(GROQ_API_URL, {
@@ -4192,8 +4194,8 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
     // ── STAGE 3: cross-check the PRD against the user's inputs ──
-    setProgress(90, '⏳ Clearing Groq token quota before cross-check…', '');
-    await waitForGroqQuota(5000);
+    // (verifyAndFixPRD's first 70B call self-throttles via waitForGroqQuota only
+    //  if the window is genuinely full — no forced wait here.)
     const verify = await verifyAndFixPRD(brief, rawMarkdown);
     rawMarkdown = verify.markdown;
     _lastVerify = verify;

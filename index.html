@@ -3192,36 +3192,37 @@ function budgetMaxTokens(systemPrompt, userPrompt, desiredMax) {
 async function waitForGroqQuota() {
   const limit = GROQ_LIMITS.tpmLimitPerMin;
   const safety = GROQ_LIMITS.tpmSafetyMarginTokens;
-  let rounds = 0;
-  const maxRounds = 3; // local-window self-clears in ~1 round; cap keeps it short
 
-  while (rounds < maxRounds) {
-    const used = getTokensUsedLastMinute();
-    // Room left in this minute → go. (Only true usage counts, not the next call.)
-    if (used + safety < limit) return;
+  const used = getTokensUsedLastMinute();
+  if (used + safety < limit) return; // room → go immediately
 
-    const log = getTokenLog().filter(e => Date.now() - e.ts < 60 * 1000);
-    let waitSec = GROQ_LIMITS.tpmWindowWaitSec;
-    if (log.length) {
-      const oldest = Math.min(...log.map(e => e.ts));
-      waitSec = Math.max(8, Math.ceil((oldest + 60_000 - Date.now()) / 1000) + 2);
-    }
-
-    setProgress(
-      null,
-      `⏳ Token quota ${used.toLocaleString()}/${limit}/min used — waiting ${formatWaitTime(waitSec)} for it to refresh…`,
-      undefined
-    );
-    await waitWithCountdown(waitSec, {
-      attempt: rounds + 1,
-      maxAttempts: maxRounds,
-      totalBudgetSec: waitSec,
-      mode: 'proactive',
-      quotaUsed: used,
-      quotaLimit: limit
-    });
-    rounds++;
+  // Compute ONE wait that frees enough tokens, so we show a single continuous
+  // countdown instead of restarting the timer every few seconds.
+  const now = Date.now();
+  const log = getTokenLog().filter(e => now - e.ts < 60 * 1000).sort((a, b) => a.ts - b.ts);
+  const needToFree = (used + safety) - limit;
+  let freed = 0;
+  let clearAt = now + 60_000; // worst case: a full window
+  for (const e of log) {
+    freed += e.tokens;
+    clearAt = e.ts + 60_000;   // this entry ages out (drops from the rolling minute) here
+    if (freed >= needToFree) break;
   }
+  const waitSec = Math.max(5, Math.ceil((clearAt - now) / 1000) + 2);
+
+  setProgress(
+    null,
+    `⏳ Token quota ${used.toLocaleString()}/${limit.toLocaleString()}/min — refilling in ${formatWaitTime(waitSec)}, then continuing…`,
+    undefined
+  );
+  await waitWithCountdown(waitSec, {
+    totalBudgetSec: waitSec,
+    mode: 'reset-wait',
+    quotaUsed: used,
+    quotaLimit: limit
+  });
+  // One wait is enough: the entries that pushed us over have now aged out of the
+  // rolling 60s window. The reactive 429 handler covers any rare residual case.
 }
 
 async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3, model = MODEL }, retryCount = 0, tpmResetCycle = 0) {
@@ -3987,7 +3988,7 @@ async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
   let totalFixed = 0;
   let lastIssues = [];
-  const MAX_ROUNDS = 3;
+  const MAX_ROUNDS = 2;
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     // ── Audit on the HIGH model, plus the free local audit as an extra signal ──
@@ -4002,7 +4003,7 @@ async function verifyAndFixPRD(brief, md) {
         userPrompt: auditUser,
         maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
         temperature: 0.0,
-        model: MODEL
+        model: AUDIT_MODEL // separate token bucket → detection adds no quota wait
       });
       tokens += audit.usage?.total_tokens || 0;
       const parsed = parseAuditJSON(audit.text);
@@ -4371,13 +4372,14 @@ function waitWithCountdown(totalSec, opts = {}) {
         const cls = p < pipActive ? 'done' : (p === pipActive ? 'active' : '');
         pips += `<span class="attempt-pip ${cls}"></span>`;
       }
+      const singleWait = (mode === 'reset-wait'); // one continuous timer, not a retry sequence
       const attemptLabel = (mode === 'tpm-reset' || mode === 'reset-wait')
         ? `Auto-resuming when ready`
         : `Attempt ${attempt} of ${maxAttempts}`;
       const attemptRow =
         `<div class="attempt-track">` +
           `<span class="attempt-count">Pause #${pauseNo} this PRD</span>` +
-          `<span class="attempt-pips">${pips}</span>` +
+          (singleWait ? '' : `<span class="attempt-pips">${pips}</span>`) +
           `<span class="attempt-sub">${attemptLabel} · ${totalWaitedFmt} waited so far</span>` +
         `</div>`;
 

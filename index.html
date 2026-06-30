@@ -506,6 +506,11 @@ textarea::placeholder { color: var(--text-muted); }
   color: var(--accent2); letter-spacing: 0.02em;
 }
 .rate-wait-times .dim { color: var(--text-muted); font-weight: 500; }
+.rate-wait-times .left-highlight {
+  color: var(--accent2);
+  font-weight: 800;
+  text-shadow: 0 0 12px rgba(245, 80, 54, 0.35);
+}
 .rate-wait-sub {
   font-size: 0.72rem; color: var(--text-muted); margin-top: 5px; line-height: 1.45;
 }
@@ -4224,7 +4229,9 @@ function waitWithCountdown(totalSec, opts = {}) {
               `<strong>Total wait (all ${maxAttempts} attempts): up to ${budgetFmt}</strong>` +
             `</div>` +
             `<div class="rate-wait-times" style="margin-top:4px;font-weight:500;">` +
-              `<span class="dim">${usedFmt} used · ${leftBudgetFmt} left worst-case · this pause: ${pauseLeft}</span>` +
+              `<span class="dim">${usedFmt} used · </span>` +
+              `<strong class="left-highlight">${leftBudgetFmt} left worst-case</strong>` +
+              `<span class="dim"> · this pause: ${pauseLeft}</span>` +
             `</div>` +
             `<div class="rate-wait-sub">Attempt ${attempt} of ${maxAttempts} — usually only one short pause is needed. Resumes on its own.</div>` +
           `</div>` +

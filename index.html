@@ -850,6 +850,20 @@ textarea::placeholder { color: var(--text-muted); }
 .stack-fix-notice ul { margin: 6px 0 0 18px; padding: 0; }
 .stack-fix-notice li { margin-bottom: 3px; }
 
+.assume-notice {
+  margin: 12px 22px 0;
+  padding: 10px 14px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: 10px;
+  font-size: 0.76rem;
+  color: #a5b4fc;
+  line-height: 1.5;
+}
+.assume-notice ul { margin: 6px 0 0 18px; padding: 0; }
+.assume-notice li { margin-bottom: 3px; }
+.assume-notice .assume-hint { display:block; margin-top:7px; color: var(--text-muted); font-size:0.72rem; }
+
 /* ─────────── VERIFY BADGE ─────────── */
 .verify-badge {
   display: inline-flex;
@@ -1592,6 +1606,10 @@ footer a:hover { color: var(--accent2); }
 // ═══════════════════════════════════════════════════════════
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL        = 'llama-3.3-70b-versatile';
+// Audit/fix run on a separate, faster model. Groq meters each model on its OWN
+// token-per-minute bucket, so the cross-check keeps working even when the main
+// 70B model is rate-limited — this is what stops verification from being skipped.
+const AUDIT_MODEL  = 'llama-3.1-8b-instant';
 const MAX_TOKENS   = 8192;
 
 // ═══════════════════════════════════════════════════════════
@@ -2094,6 +2112,19 @@ Object.keys(DOMAIN_IDEA_PLACEHOLDERS).forEach(k => { DOMAINS[k].ideaPlaceholder 
 // ═══════════════════════════════════════════════════════════
 //  STAGE 1 — EXPAND any idea (even a one-liner) into a full brief
 // ═══════════════════════════════════════════════════════════
+// Heuristic: is the user's idea too thin to produce a precise PRD?
+// Used only to surface a "double-check my assumptions" nudge — never blocks.
+function isVagueIdea(idea) {
+  const s = (idea || '').trim();
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length <= 4) return true;                       // "food delivery website"
+  const hasTech = /\b(react|vue|angular|next|node|express|django|flask|fastapi|spring|laravel|rails|\.net|postgres|mysql|mongo|sqlite|redis|stripe|firebase|supabase|aws|python|java|typescript|go|rust|php)\b/i.test(s);
+  const hasSpecifics = /\b(like|similar to|with|payments?|auth|login|realtime|chat|dashboard|api|users?|admin)\b/i.test(s);
+  // Longer text with no tech AND no functional specifics is still vague.
+  if (words.length <= 9 && !hasTech && !hasSpecifics) return true;
+  return false;
+}
+
 function buildExpandPrompt(rawIdea) {
   const d = getDomain(currentDomainId);
   const stackLines = d.stackFields.map(f => `  "${f.key}": "${f.desc}"`).join(',\n');
@@ -2104,7 +2135,7 @@ PROJECT DOMAIN: ${d.label}
 
 ${d.expandHint}
 
-Infer everything that's missing and be specific with versions/tools.
+Infer everything that's missing and be specific with versions/tools. When the input is vague, make concrete, sensible choices for the stated domain (do NOT leave anything generic) and RECORD each significant assumption you made in the "assumptions" array so the user can correct it. Anchor the project to a recognizable real-world reference when helpful (e.g. "like Swiggy/DoorDash"). Keep assumptions short ("Assumed Stripe for payments", "Assumed ~10k daily users").
 
 Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Just raw JSON:
 
@@ -2117,7 +2148,8 @@ Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Ju
 ${stackLines},
   "coreFeatures": ["capability 1", "capability 2", "capability 3", "capability 4", "capability 5"],
   "niceToHave": ["item A", "item B", "item C"],
-  "outOfScope": ["thing 1", "thing 2"]
+  "outOfScope": ["thing 1", "thing 2"],
+  "assumptions": ["assumption 1", "assumption 2", "assumption 3"]
 }`;
 }
 
@@ -3000,7 +3032,7 @@ function budgetMaxTokens(systemPrompt, userPrompt, desiredMax) {
 //  GROQ CALL — with exponential backoff retry on 429
 //  and auto-shrink retry on 413 (request too large for TPM)
 // ═══════════════════════════════════════════════════════════
-async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3 }, retryCount = 0) {
+async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3, model = MODEL }, retryCount = 0) {
   const response = await fetch(GROQ_API_URL, {
     method: 'POST',
     headers: {
@@ -3008,7 +3040,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       max_tokens: maxTokens,
       temperature,
       messages: [
@@ -3036,7 +3068,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       ''
     );
     await waitWithCountdown(waitSec);
-    return callGroq({ systemPrompt, userPrompt, maxTokens, temperature }, retryCount + 1);
+    return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, retryCount + 1);
   }
 
   // ── 413: request too large for TPM → shrink max_tokens to fit and retry ──
@@ -3056,7 +3088,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       if (newMaxTokens < maxTokens) {
         setProgress(null, '⏳ Trimming response size to fit Groq\'s per-minute limit — retrying…', '');
         await new Promise(r => setTimeout(r, 400));
-        return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature }, retryCount + 1);
+        return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature, model }, retryCount + 1);
       }
     }
     throw new Error('Your tech-stack details pushed the request over Groq\'s per-minute token limit. Try shortening the "Other Tools" field (or wait ~1 minute and retry).');
@@ -3237,6 +3269,12 @@ function renderBriefCard(brief) {
         <strong>🔧 Auto-corrected for stack consistency:</strong>
         <ul>${brief._stackFixes.map(f => `<li>${f}</li>`).join('')}</ul>
       </div>` : ''}
+      ${(brief.assumptions && brief.assumptions.length) ? `
+      <div class="assume-notice">
+        <strong>💡 Assumptions I made${brief._vague ? ' (your idea was brief — please double-check)' : ''}:</strong>
+        <ul>${brief.assumptions.map(a => `<li>${a}</li>`).join('')}</ul>
+        <span class="assume-hint">Edit the tech stack below or regenerate with a more detailed idea to override these.</span>
+      </div>` : ''}
     </div>
   `;
 
@@ -3316,7 +3354,7 @@ async function generatePRD() {
     const stage1 = await callGroq({
       systemPrompt: 'You are an expert software product analyst. Expand project ideas into complete briefs with INTERNALLY CONSISTENT tech stacks — auth must match backend runtime (Spring Boot → JWT + Spring Security, never NextAuth on Spring). Always respond with valid raw JSON only. No markdown fences, no explanation.',
       userPrompt: buildExpandPrompt(idea),
-      maxTokens: 700,
+      maxTokens: 900,
       temperature: 0.25
     });
 
@@ -3332,6 +3370,7 @@ async function generatePRD() {
     }
 
     brief.domain = currentDomainId;
+    brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);
     brief = enforced.brief;
     _currentBrief = brief;
@@ -3401,16 +3440,18 @@ function localPRDAudit(brief, md) {
     // Only flag BACKEND-specific cross-contamination. NEVER flag tooling shared
     // with the JS frontend (package.json, npm, vite, etc.) — every web app has a
     // JavaScript frontend regardless of backend, so those always appear legitimately.
-    const foreign = [];
-    if (!isJava)   foreign.push(['Spring Data JPA','Spring Boot','Hibernate','pom.xml','application.properties','@Entity','@RestController','@Autowired','Maven']);
-    if (!isPython) foreign.push(['Django ORM','Django REST Framework','manage.py','SQLAlchemy','DRF']);
-    if (!isPhp)    foreign.push(['Eloquent','Artisan','composer.json']);
-    if (!isRuby)   foreign.push(['ActiveRecord','Gemfile','Rails console']);
-    if (!isDotnet) foreign.push(['Entity Framework','DbContext','.csproj','NuGet']);
-    // Node BACKEND-only markers (NOT package.json/npm — those are frontend tooling)
-    if (!isNode)   foreign.push(['Mongoose','Sequelize','Express.js']);
-
-    const flat = [].concat(...foreign);
+    // Data-driven ecosystem map: broad coverage so novel-but-related mistakes are
+    // caught generically, not just a hand-picked few.
+    const ECOSYSTEMS = {
+      java:   { active: isJava,   sigs: ['spring data jpa','spring boot','spring mvc','spring security','hibernate','pom.xml','application.properties','@entity','@restcontroller','@autowired','@service','@repository','maven','gradle','mockmvc','junit 5','jpa repository','jdbc template'] },
+      python: { active: isPython, sigs: ['django orm','django rest framework','flask-sqlalchemy','sqlalchemy','alembic','manage.py','requirements.txt','pip install','wsgi','asgi','gunicorn','uvicorn','pydantic','celery beat','drf','pytest','virtualenv'] },
+      php:    { active: isPhp,    sigs: ['eloquent','artisan','composer.json','composer require','blade template','laravel mix','phpunit','psr-4'] },
+      ruby:   { active: isRuby,   sigs: ['activerecord','active record','gemfile','bundle install','rails console','rake','rspec','sidekiq worker','puma','erb template'] },
+      dotnet: { active: isDotnet, sigs: ['entity framework','dbcontext','.csproj','nuget','linq','asp.net core','iis','razor pages','xunit','dependency injection container'] },
+      node:   { active: isNode,   sigs: ['mongoose','sequelize','express.js','express middleware','app.use(','npm run','nest module','typeorm entity','prisma client','jest','nodemon','pm2'] }
+    };
+    const flat = [];
+    Object.values(ECOSYSTEMS).forEach(eco => { if (!eco.active) flat.push(...eco.sigs); });
     flat.forEach(sig => {
       const re = new RegExp('(^|[^a-z0-9])' + sig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)', 'i');
       if (re.test(text)) {
@@ -3482,8 +3523,41 @@ function localPRDAudit(brief, md) {
         issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Orders table missing status column for order tracking.', fix: 'Add status VARCHAR with values pending/confirmed/preparing/delivered/cancelled.' });
     }
 
-    if (/easy to use and highly configurable/i.test(text))
-      issues.push({ severity: 'minor', where: 'Tech Stack Overview', problem: 'Generic filler text "Easy to use and highly configurable" repeated in Why Chosen column.', fix: 'Replace each Why Chosen with a specific, project-relevant reason.' });
+    // Generic filler / boilerplate prose detection (content quality).
+    const FILLER = [
+      'easy to use and highly configurable',
+      'easy to use',
+      'fast and reliable',
+      'scalable and maintainable',
+      'robust and scalable',
+      'industry-standard',
+      'industry standard',
+      'best-in-class',
+      'cutting-edge',
+      'state-of-the-art',
+      'highly performant',
+      'seamless integration',
+      'widely adopted'
+    ];
+    const fillerHits = FILLER.filter(p => {
+      const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      return (text.match(re) || []).length >= 2; // only flag when REPEATED → clearly filler
+    });
+    if (fillerHits.length)
+      issues.push({ severity: 'minor', where: 'Rationale / Why Chosen', problem: `Generic filler phrase${fillerHits.length > 1 ? 's' : ''} repeated (${fillerHits.slice(0, 3).join(', ')}). Reads as boilerplate, not a real rationale.`, fix: 'Replace each rationale with a specific reason tied to THIS project (e.g. "Postgres — relational order/payment data needs ACID transactions").' });
+
+    // Identical "Why Chosen" rationale reused across multiple rows = filler.
+    const whyCells = [...text.matchAll(/\|\s*(?:why chosen|rationale|reason)[^\n]*\n((?:\|[^\n]*\n)+)/gi)];
+    whyCells.forEach(block => {
+      const lastCol = block[1].split('\n').map(r => {
+        const cells = r.split('|').map(c => c.trim()).filter(Boolean);
+        return cells[cells.length - 1] || '';
+      }).filter(c => c.length > 8);
+      const counts = {};
+      lastCol.forEach(c => { const k = c.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+      if (Object.values(counts).some(n => n >= 3))
+        issues.push({ severity: 'minor', where: 'Tech Stack table', problem: 'The same "Why Chosen" rationale is copy-pasted across 3+ rows.', fix: 'Give every technology a distinct, project-specific justification.' });
+    });
   }
 
   // Every explicitly named tool must be mentioned somewhere
@@ -3522,6 +3596,8 @@ CHECK FOR THESE VIOLATIONS ONLY:
 6. SQL ORDER: a CREATE TABLE referencing another table via FOREIGN KEY before that table is defined.
 7. INTERNAL CONTRADICTION: document contradicts itself (e.g. Context API in frontend table but Redux in state section; microservices claim with monolith stack; React Router with Next.js; VITE_ env vars with Next.js).
 8. DOMAIN INCOMPLETE: food/e-commerce app missing menu_items/products, order_items, order status, or Stripe payment endpoints when Stripe is listed.
+9. GENERIC FILLER: a "Why Chosen"/rationale that is boilerplate ("easy to use", "fast and reliable", "industry-standard", "scalable and maintainable") or the SAME rationale copy-pasted across multiple rows instead of project-specific reasons. (severity: minor)
+10. ANY OTHER OBJECTIVE INCONSISTENCY between the inputs and the document that a careful engineer would flag, even if not listed above. Describe it concretely. (Use this to catch issues the fixed rules above don't name — but stay objective, never nitpick style.)
 
 GENERATED PRD:
 """
@@ -3586,7 +3662,8 @@ async function verifyAndFixPRD(brief, md) {
       systemPrompt: auditSys,
       userPrompt: auditUser,
       maxTokens: budgetMaxTokens(auditSys, auditUser, 1500),
-      temperature: 0.0
+      temperature: 0.0,
+      model: AUDIT_MODEL
     });
     tokens += audit.usage?.total_tokens || 0;
     const parsed = parseAuditJSON(audit.text);
@@ -3613,7 +3690,8 @@ async function verifyAndFixPRD(brief, md) {
         systemPrompt: fixSys,
         userPrompt: fixUser,
         maxTokens: budgetMaxTokens(fixSys, fixUser, MAX_TOKENS),
-        temperature: 0.15
+        temperature: 0.15,
+        model: AUDIT_MODEL
       });
       tokens += fix.usage?.total_tokens || 0;
       if (fix.text && fix.text.trim().length > md.length * 0.5) {
@@ -3780,7 +3858,13 @@ OUTPUT RULES:
 - Prefer free or low-cost tiers wherever the project reasonably allows.
 - COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
 - ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
-- SQL: CREATE TABLE statements MUST be ordered so any table referenced by a FOREIGN KEY is defined before the table referencing it.`;
+- SQL: CREATE TABLE statements MUST be ordered so any table referenced by a FOREIGN KEY is defined before the table referencing it.
+
+SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a template):
+- BANNED phrases (never use them, especially in "Why Chosen" / rationale cells): "easy to use", "fast and reliable", "scalable and maintainable", "robust and scalable", "industry-standard", "best-in-class", "cutting-edge", "state-of-the-art", "seamless integration", "highly performant", "widely adopted". Every rationale must reference THIS project's concrete needs (data shape, traffic, team, latency, cost, compliance) — e.g. "PostgreSQL — order and payment records need ACID transactions and relational integrity across users → orders → order_items".
+- Every "Why Chosen" cell must be UNIQUE. Never repeat the same justification across rows.
+- Use concrete, realistic numbers, not vague adjectives: name actual library versions, p95 latency targets in ms, rate limits, token TTLs, table row estimates, cache TTLs. If the user's input is vague, choose sensible defaults for the stated domain and state them explicitly — never write "TBD" or hand-wave.
+- Business logic, edge cases, and error states must be specific to the described product, not boilerplate that could apply to any app.`;
 
     const fullSystemPrompt = prdSystemPrompt + domainSystemExtra(_dom);
     const stage2 = await callGroq({

@@ -3340,9 +3340,69 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   }
 
   const data = await response.json();
-  const text = data.choices?.[0]?.message?.content || '';
+  const choice = data.choices?.[0] || {};
+  const text = choice.message?.content || '';
+  const finishReason = choice.finish_reason || 'stop';
   if (data.usage?.total_tokens) logGroqTokens(data.usage.total_tokens);
-  return { text, usage: data.usage };
+  return { text, usage: data.usage, finishReason };
+}
+
+// True when the PRD stopped before the required closing sections or left placeholder rows.
+function isPRDTruncated(md) {
+  if (!md || md.length < 400) return true;
+  if (/\*End of PRD/i.test(md)) return false;
+  const tail = md.slice(-1500);
+  if (/\|\s*\.{2,}\s*\|/.test(tail)) return true;
+  if (/##\s*15\.\s*Environment/i.test(md) && !/##\s*16\./i.test(md)) return true;
+  if (/##\s*16\./i.test(md) && !/##\s*17\./i.test(md)) return true;
+  if (/##\s*17\./i.test(md) && !/##\s*Glossary/i.test(md)) return true;
+  if (/##\s*Glossary/i.test(md) && !/\*End of PRD/i.test(md)) return true;
+  return true;
+}
+
+// Generate the full PRD, auto-continuing when Groq hits the output token ceiling.
+async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
+  let totalTokens = 0;
+  const maxTok = budgetMaxTokens(systemPrompt, userPrompt, MAX_TOKENS);
+  let res = await callGroq({
+    systemPrompt,
+    userPrompt,
+    maxTokens: maxTok,
+    temperature: 0.35
+  });
+  let md = res.text || '';
+  totalTokens += res.usage?.total_tokens || 0;
+
+  let contRound = 0;
+  const MAX_CONTINUATIONS = 4;
+  while ((res.finishReason === 'length' || isPRDTruncated(md)) && contRound < MAX_CONTINUATIONS) {
+    contRound++;
+    if (onProgress) onProgress(contRound);
+    await waitForGroqQuota();
+    const tail = md.slice(-4000);
+    const contSys =
+      'You are continuing a Product Requirements Document cut off mid-generation. ' +
+      'Output ONLY new markdown — do NOT repeat earlier sections. ' +
+      'If a table row was cut off, complete that row first. ' +
+      'Then finish ALL remaining sections through Glossary and *End of PRD — <name> v1.0*. ' +
+      'Every table row must be fully populated — NEVER use "..." as a placeholder.';
+    const contUser =
+      `Project: ${brief.projectName}\nStack: ${brief.backend} + ${brief.frontend}\n\n` +
+      `The document currently ends with:\n"""\n${tail}\n"""\n\nContinue from the exact cut-off point.`;
+    const contMax = budgetMaxTokens(contSys, contUser, 5500);
+    res = await callGroq({
+      systemPrompt: contSys,
+      userPrompt: contUser,
+      maxTokens: contMax,
+      temperature: 0.3
+    });
+    const chunk = (res.text || '').trim();
+    if (!chunk) break;
+    md = md.trimEnd() + '\n\n' + chunk;
+    totalTokens += res.usage?.total_tokens || 0;
+  }
+
+  return { text: md, usage: { total_tokens: totalTokens }, truncated: isPRDTruncated(md) };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3967,6 +4027,14 @@ function localPRDAudit(brief, md) {
     });
   });
 
+  if (isPRDTruncated(text))
+    issues.push({
+      severity: 'critical',
+      where: 'Document completeness',
+      problem: 'PRD is incomplete — missing Glossary / *End of PRD* or contains "..." placeholder rows.',
+      fix: 'Complete every remaining section (16–17, Glossary) with full table rows; end with *End of PRD*.'
+    });
+
   // De-dupe
   const seen = new Set();
   return issues.filter(i => { const k = i.where + '|' + i.problem; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -4157,7 +4225,7 @@ async function fixWholePRD(brief, md, issues) {
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```markdown\n?/i, '').replace(/^```\n?/i, '').replace(/```\s*$/,'').trim();
-  if (!out || out.length < md.length * 0.75 || !/^#\s+/m.test(out)) return null;
+  if (!out || out.length < md.length * 0.75 || !/^#\s+/m.test(out) || isPRDTruncated(out)) return null;
   return { text: out, tokens: res.usage?.total_tokens || 0 };
 }
 
@@ -4530,7 +4598,7 @@ CODE IS ALLOWED ONLY FOR:
 OUTPUT RULES:
 - Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
 - Every table must have real populated rows — no [example here].
-- Zero placeholders in tables, config values, or deployment commands.
+- Zero placeholders in tables, config values, or deployment commands. NEVER use "..." or "[TBD]" in table cells — every row must be complete.
 - Prefer free or low-cost tiers wherever the project reasonably allows.
 - COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
 - ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
@@ -4543,15 +4611,16 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
 - Business logic, edge cases, and error states must be specific to the described product, not boilerplate that could apply to any app.`;
 
     const fullSystemPrompt = prdSystemPrompt + domainSystemExtra(_dom);
-    const stage2 = await callGroq({
-      systemPrompt: fullSystemPrompt,
-      userPrompt: prdUserPrompt,
-      maxTokens: budgetMaxTokens(fullSystemPrompt, prdUserPrompt, MAX_TOKENS),
-      temperature: 0.35
+    const stage2 = await generateFullPRD(fullSystemPrompt, prdUserPrompt, brief, (part) => {
+      setProgress(85 + part * 2, `📝 Completing PRD (continuation ${part})…`, 'Finishing remaining sections…');
     });
 
     clearInterval(progressInterval);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    if (stage2.truncated) {
+      throw new Error('PRD generation was cut off before finishing (Groq output limit). Wait ~1 minute and click Generate again — continuations will pick up where it left off.');
+    }
 
     rawMarkdown = postProcessPRD(brief, stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');

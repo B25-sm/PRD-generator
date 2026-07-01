@@ -1746,10 +1746,10 @@ footer a:hover { color: var(--accent2); }
 // ═══════════════════════════════════════════════════════════
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL        = 'llama-3.3-70b-versatile';
-// Fast model — separate Groq token bucket. Used for Stage 1, audit, and repairs so
-// ONE 70B call (full PRD generation) is the only heavy hit per PRD on free tier.
+// Fast model — separate Groq bucket; Stage 1 brief expansion only.
 const FAST_MODEL   = 'llama-3.1-8b-instant';
-const AUDIT_MODEL  = FAST_MODEL;
+// Cross-check audit + repairs always use the high model for maximum accuracy.
+const VERIFY_MODEL = MODEL;
 const MAX_TOKENS   = 8192;
 
 // ═══════════════════════════════════════════════════════════
@@ -3833,6 +3833,22 @@ function localPRDAudit(brief, md) {
     if (!(isFood || isEcom) && /CREATE TABLE\s+menu_items|\/menu-items|menu_items table/i.test(text))
       issues.push({ severity: 'critical', where: 'Database Schema', problem: 'menu_items / menu API appears but this is not a food-delivery or e-commerce app.', fix: 'Remove menu_items table and menu-item endpoints; use domain tables (e.g. posts, comments for a blog).' });
 
+    if (/CREATE TABLE\s+users/i.test(text) && /\bpassword\s+(VARCHAR|TEXT|CHAR)/i.test(text) && !/password_hash/i.test(text))
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Users table stores a column named password instead of password_hash.', fix: 'Rename to password_hash and note hashed+salted storage in Data Integrity Rules.' });
+
+    if (/comment|review|rating|follow|subscri/i.test(featAll) && /CREATE TABLE/i.test(text)) {
+      if (/comment/i.test(featAll) && !/CREATE TABLE\s+comments/i.test(text))
+        issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Comments are in MVP/features but no comments table exists.', fix: 'Add comments table (id, user_id, post_id, body, created_at).' });
+      if (/(follow|subscri)/i.test(featAll) && !/CREATE TABLE\s+(follows|subscriptions)/i.test(text))
+        issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Follow/subscribe feature stated but no follows/subscriptions table.', fix: 'Add follows or subscriptions table with follower_id and followed_id.' });
+    }
+
+    if (/\b(the provided schema seems|given the project's backend is|however, this section focuses|consider using spring security for authentication)\b/i.test(text))
+      issues.push({ severity: 'critical', where: 'Document tone', problem: 'Auditor/reviewer commentary leaked into the PRD body.', fix: 'Remove meta-commentary; state requirements directly as spec prose.' });
+
+    if (/\|\s*State\s*\|[^|\n]*Context/i.test(text) && /In-memory\s*\(\s*Redux\s*\)/i.test(text))
+      issues.push({ severity: 'critical', where: 'State Management', problem: 'Tech stack says Context API but token storage references Redux.', fix: 'Pick ONE state library and use it consistently in Sections 2, 5, 8, and 9.' });
+
     if (isJava && /\|\s*Authentication\s*\|[^|\n]*NextAuth/i.test(text))
       issues.push({ severity: 'critical', where: 'Tech Stack / Backend', problem: 'Backend Authentication row lists NextAuth but backend is Spring Boot.', fix: 'Replace with Spring Security + JWT in the backend table; NextAuth is frontend-only.' });
 
@@ -3981,6 +3997,10 @@ CHECK FOR THESE VIOLATIONS ONLY:
 9. GENERIC FILLER: a "Why Chosen"/rationale that is boilerplate ("easy to use", "fast and reliable", "industry-standard", "scalable and maintainable") or the SAME rationale copy-pasted across multiple rows instead of project-specific reasons. (severity: minor)
 10. ANY OTHER OBJECTIVE INCONSISTENCY between the inputs and the document that a careful engineer would flag, even if not listed above. Describe it concretely. (Use this to catch issues the fixed rules above don't name — but stay objective, never nitpick style.)
 11. DUPLICATE CONTENT: the same list, table, checklist, endpoint set, schema table, or ### subsection repeated twice in the same section (e.g. Goals as both prose and bullets; Build Order tasks listed twice; Request Flow steps duplicated). (severity: critical)
+12. AUDITOR COMMENTARY: meta-commentary leaked into the PRD ("the provided schema seems insecure", "Given the project's backend is in Spring, consider…", "this section focuses on…"). A PRD is a spec, not a review memo. (severity: critical)
+13. PLAIN-TEXT PASSWORDS: users table stores a column named \`password\` instead of \`password_hash\`. (severity: critical)
+14. DOMAIN TABLES: food-delivery tables (menu_items, order_items, orders with delivery status) in a non-food/non-e-commerce project, OR blog MVP features (comments, categories, follows) stated in Executive Summary but missing from schema. (severity: critical)
+15. STATE CONTRADICTION: Context API chosen in tech stack but Redux used for auth tokens or server cache in Sections 8–9 (or vice versa) without a single consistent library. (severity: critical)
 
 GENERATED PRD:
 """
@@ -4110,57 +4130,202 @@ async function fixSection(brief, sectionText, issues) {
   const res = await callGroq({
     systemPrompt: sys,
     userPrompt: user,
-    maxTokens: budgetMaxTokens(sys, user, 2400),
-    temperature: 0.15,
-    model: FAST_MODEL   // repairs on fast bucket — 70B is reserved for generation only
+    maxTokens: budgetMaxTokens(sys, user, 2800),
+    temperature: 0.1,
+    model: VERIFY_MODEL
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
   return { text: out, tokens: res.usage?.total_tokens || 0 };
 }
 
-// Stage 3 — cross-check & repair.
-// • Local rule audit ALWAYS runs (free, deterministic).
-// • AI semantic audit + section repairs use FAST_MODEL (separate Groq bucket from 70B).
-// • A 70B pause during generation does NOT skip cross-check — only a fast-model pause does.
-// • Two rounds: audit+fix, then local re-check + fix any remaining (no second AI audit).
+// One 70B call to fix the entire PRD when it fits in the token budget (best quality).
+async function fixWholePRD(brief, md, issues) {
+  const capped = issues.slice(0, 15);
+  const sys = 'You are an expert PRD editor. Fix every listed issue precisely. Output ONLY the corrected full PRD in Markdown — same structure, no commentary, no duplicate sections.';
+  const user = buildFixPrompt(brief, md, capped);
+  const maxTok = budgetMaxTokens(sys, user, 6000);
+  if (estimateTokens(sys) + estimateTokens(user) + maxTok > GROQ_LIMITS.tpmLimit - GROQ_LIMITS.tpmSafetyMargin) {
+    return null;
+  }
+  const res = await callGroq({
+    systemPrompt: sys,
+    userPrompt: user,
+    maxTokens: maxTok,
+    temperature: 0.1,
+    model: VERIFY_MODEL
+  });
+  let out = (res.text || '').trim();
+  if (/^```/.test(out)) out = out.replace(/^```markdown\n?/i, '').replace(/^```\n?/i, '').replace(/```\s*$/,'').trim();
+  if (!out || out.length < md.length * 0.75 || !/^#\s+/m.test(out)) return null;
+  return { text: out, tokens: res.usage?.total_tokens || 0 };
+}
+
+function buildBatchSectionFixPrompt(brief, parts, entries) {
+  const dom = getDomain(brief.domain || 'web');
+  const stackLines = dom.stackFields.map(f => `- ${f.label}: ${brief[f.key] || '(not set)'}`).join('\n');
+  let blocks = '';
+  entries.forEach(([ix, issues], n) => {
+    const issueLines = issues.map((i, j) => `  ${j + 1}. ${i.problem} → FIX: ${i.fix}`).join('\n');
+    blocks += `\n--- SECTION ${n + 1} ---\nFIXES:\n${issueLines}\n\nORIGINAL:\n"""\n${parts[ix].text.trim()}\n"""\n`;
+  });
+  return `Correct EVERY section below using the 70B-quality bar. Return ALL corrected sections in order, each starting with its original "## " heading. No preamble. No duplication.
+
+USER INPUTS:
+Project: ${brief.projectName}
+${stackLines}
+Tools: ${brief.otherTools || 'None'}
+${blocks}
+Output ONLY the corrected section Markdown blocks in the same order.`;
+}
+
+// One 70B call fixes up to 4 sections at once (quality + fewer quota hits than N calls).
+async function fixSectionsBatch(brief, parts, entries) {
+  const sys = 'You are an expert PRD editor. Return only corrected Markdown sections, each starting with ## heading.';
+  const user = buildBatchSectionFixPrompt(brief, parts, entries);
+  const res = await callGroq({
+    systemPrompt: sys,
+    userPrompt: user,
+    maxTokens: budgetMaxTokens(sys, user, 4500),
+    temperature: 0.1,
+    model: VERIFY_MODEL
+  });
+  let out = (res.text || '').trim();
+  if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
+  const fixedParts = splitPRDSections(out);
+  let applied = 0;
+  for (const [ix, issues] of entries) {
+    const want = parts[ix].heading.toLowerCase().replace(/^\d+\.\s*/, '').trim();
+    const match = fixedParts.find(p => {
+      const h = p.heading.toLowerCase().replace(/^\d+\.\s*/, '').trim();
+      return h && (h.includes(want) || want.includes(h));
+    });
+    if (match && match.text.length > parts[ix].text.length * 0.5) {
+      parts[ix].text = '\n' + match.text.trim() + '\n';
+      applied += issues.length;
+    }
+  }
+  return { applied, tokens: res.usage?.total_tokens || 0 };
+}
+
+async function runSemanticAudit(brief, md) {
+  const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
+  const auditUser = buildAuditPrompt(brief, md);
+  const audit = await callGroq({
+    systemPrompt: auditSys,
+    userPrompt: auditUser,
+    maxTokens: budgetMaxTokens(auditSys, auditUser, 2000),
+    temperature: 0.0,
+    model: VERIFY_MODEL
+  });
+  return { parsed: parseAuditJSON(audit.text), tokens: audit.usage?.total_tokens || 0 };
+}
+
+// Deterministic fixes before/alongside AI — catches mechanical errors with zero tokens.
+function applyLocalFixes(brief, md) {
+  if (!md) return md;
+  let out = md;
+  const featAll = ((brief.coreFeatures || []).join(' ') + ' ' + brief.projectName + ' ' + (brief.oneLiner || '')).toLowerCase();
+  const isFood = /food|restaurant|delivery|meal|order hub/.test(featAll);
+  const isEcom = /e-?commerce|marketplace|shop|cart|checkout/.test(featAll);
+
+  // users.password → password_hash in SQL DDL
+  out = out.replace(/(CREATE TABLE\s+users[\s\S]*?)(\bpassword\b)(\s+(?:VARCHAR|TEXT|CHAR))/gi, (full, pre, col, typ) => {
+    if (/password_hash/i.test(full)) return full;
+    return pre + 'password_hash' + typ;
+  });
+
+  // Strip food-delivery menu_items DDL from non-food/ecom projects
+  if (!(isFood || isEcom)) {
+    out = out.replace(/CREATE TABLE\s+menu_items\s*\([\s\S]*?\)\s*;/gi, '');
+    out = out.replace(/^\s*[-*•]?\s*`?GET\s+\/api\/menu-items`?[^\n]*\n/gim, '');
+    out = out.replace(/^\s*\|[^\n]*menu[- ]items[^\n]*\n/gim, '');
+  }
+
+  // Remove obvious auditor meta-commentary lines
+  out = out.replace(/^.*\b(the provided schema seems|given the project's backend is|this section focuses on|however, this section)\b.*\n/gim, '');
+
+  return out;
+}
+
+async function repairWithHighModel(brief, md, critical, parts, bucket) {
+  let tokens = 0;
+  const entries = [...bucket.entries()];
+
+  // Best path: one-shot full-document repair on 70B
+  if (md.length < 32000 && critical.length <= 15) {
+    try {
+      const whole = await fixWholePRD(brief, md, critical);
+      if (whole) {
+        return { md: postProcessPRD(brief, applyLocalFixes(brief, whole.text)), applied: critical.length, tokens: whole.tokens };
+      }
+    } catch (e) { console.warn('Whole-PRD fix failed, falling back to batch:', e); }
+  }
+
+  // Next: batch up to 4 sections in one 70B call
+  if (entries.length) {
+    try {
+      const batch = await fixSectionsBatch(brief, parts, entries.slice(0, 4));
+      tokens += batch.tokens;
+      if (batch.applied) {
+        return { md: postProcessPRD(brief, applyLocalFixes(brief, parts.map(p => p.text).join(''))), applied: batch.applied, tokens };
+      }
+    } catch (e) { console.warn('Batch section fix failed:', e); }
+  }
+
+  // Last resort: section-by-section on 70B (max 2)
+  let applied = 0;
+  for (const [ix, sectionIssues] of entries.slice(0, 2)) {
+    try {
+      const fixed = await fixSection(brief, parts[ix].text, sectionIssues);
+      tokens += fixed.tokens;
+      if (fixed.text && /^##\s+/.test(fixed.text) && fixed.text.length > parts[ix].text.length * 0.5) {
+        parts[ix].text = '\n' + fixed.text.trim() + '\n';
+        applied += sectionIssues.length;
+      }
+    } catch (e) { console.warn('Section fix failed:', parts[ix].heading, e); }
+  }
+  return {
+    md: postProcessPRD(brief, applyLocalFixes(brief, parts.map(p => p.text).join(''))),
+    applied,
+    tokens
+  };
+}
+
+// Stage 3 — high-quality cross-check on VERIFY_MODEL (70B).
+// Flow per round: local fixes → local audit → 70B semantic audit → 70B repair (whole-doc,
+// batch, or section fallback). Up to 3 rounds with re-audit until clean or limits hit.
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
   let appliedFixes = 0;
   let aiAuditRan = false;
-  const MAX_ROUNDS = 2;
-  const MAX_SECTIONS_PER_ROUND = 4;
+  const MAX_ROUNDS = 3;
+
+  md = applyLocalFixes(brief, md);
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
+    md = postProcessPRD(brief, applyLocalFixes(brief, md));
     let issues = localPRDAudit(brief, md);
 
-    // AI semantic audit — round 1 only, fast model (unaffected by 70B quota exhaustion).
-    if (round === 1 && !_rateLimitSession.fastPaused) {
-      try {
-        setProgress(92, '🔎 Cross-checking against your inputs…', '');
-        const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
-        const auditUser = buildAuditPrompt(brief, md);
-        const audit = await callGroq({
-          systemPrompt: auditSys,
-          userPrompt: auditUser,
-          maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
-          temperature: 0.0,
-          model: FAST_MODEL
-        });
-        tokens += audit.usage?.total_tokens || 0;
-        aiAuditRan = true;
-        const parsed = parseAuditJSON(audit.text);
-        if (parsed && parsed.issues.length) issues = issues.concat(parsed.issues.filter(i => i && i.problem));
-      } catch (e) {
-        console.warn(`AI audit failed (round ${round}):`, e);
-        if (_rateLimitSession.fastPaused && issues.length === 0) {
-          return { markdown: postProcessPRD(brief, md), tokens, status: 'unverified', issues: [], fixedCount: 0 };
-        }
+    try {
+      setProgress(
+        round === 1 ? 92 : (round === 2 ? 95 : 97),
+        round === 1
+          ? '🔎 Cross-checking with 70B model against your inputs…'
+          : `🔎 Re-auditing with 70B (pass ${round}/${MAX_ROUNDS})…`,
+        ''
+      );
+      const { parsed, tokens: auditTok } = await runSemanticAudit(brief, md);
+      tokens += auditTok;
+      aiAuditRan = true;
+      if (parsed && parsed.issues.length) {
+        issues = issues.concat(parsed.issues.filter(i => i && i.problem));
       }
-    } else if (round === 1) {
-      setProgress(92, '🔎 Cross-checking (local rules — fast-model quota busy)…', '');
-    } else {
-      setProgress(95, '🔎 Re-checking after repairs…', '');
+    } catch (e) {
+      console.warn(`70B audit failed (round ${round}):`, e);
+      if (!issues.length && round === 1) {
+        return { markdown: md, tokens, status: 'unverified', issues: [], fixedCount: 0 };
+      }
     }
 
     const seen = new Set();
@@ -4177,11 +4342,11 @@ async function verifyAndFixPRD(brief, md) {
       };
     }
 
-    if (_rateLimitSession.fastPaused) {
-      return { markdown: postProcessPRD(brief, md), tokens, status: 'partial', issues: critical, fixedCount: appliedFixes, skippedAI: true };
+    if (round === MAX_ROUNDS) {
+      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
     }
 
-    setProgress(round === 1 ? 96 : 97, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''} (round ${round})…`, '');
+    setProgress(96, `🛠 70B repair — fixing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
     const parts = splitPRDSections(md);
     const bucket = new Map();
     critical.forEach(issue => {
@@ -4195,28 +4360,18 @@ async function verifyAndFixPRD(brief, md) {
       return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
     }
 
-    let roundApplied = 0;
-    for (const [ix, sectionIssues] of [...bucket.entries()].slice(0, MAX_SECTIONS_PER_ROUND)) {
-      try {
-        const fixed = await fixSection(brief, parts[ix].text, sectionIssues);
-        tokens += fixed.tokens;
-        if (fixed.text && /^##\s+/.test(fixed.text) && fixed.text.length > parts[ix].text.length * 0.5) {
-          parts[ix].text = '\n' + fixed.text.trim() + '\n';
-          roundApplied += sectionIssues.length;
-        }
-      } catch (e) {
-        console.warn('Section fix failed for', parts[ix].heading, e);
+    try {
+      const repaired = await repairWithHighModel(brief, md, critical, parts, bucket);
+      tokens += repaired.tokens;
+      if (repaired.applied) {
+        md = repaired.md;
+        appliedFixes += repaired.applied;
+      } else {
+        return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
       }
-      if (_rateLimitSession.fastPaused) break;
-    }
-
-    if (roundApplied) {
-      md = postProcessPRD(brief, parts.map(p => p.text).join(''));
-      appliedFixes += roundApplied;
-    } else if (round === MAX_ROUNDS) {
+    } catch (e) {
+      console.warn('70B repair failed:', e);
       return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
-    } else {
-      break; // nothing applied round 1 — don't spin round 2
     }
   }
 
@@ -4231,8 +4386,8 @@ function setVerifyBadge(result) {
   const el = document.getElementById('verify-badge');
   if (!el) return;
   const map = {
-    verified:   { cls: 'ok',   txt: '✓ Cross-checked — matches your inputs' },
-    corrected:  { cls: 'ok',   txt: `✓ Cross-checked & auto-corrected ${result.fixedCount} issue${result.fixedCount !== 1 ? 's' : ''}` },
+    verified:   { cls: 'ok',   txt: '✓ 70B cross-checked — matches your inputs' },
+    corrected:  { cls: 'ok',   txt: `✓ 70B cross-checked & auto-corrected ${result.fixedCount} issue${result.fixedCount !== 1 ? 's' : ''}` },
     partial:    { cls: 'warn', txt: result.fixedCount
       ? `⚠ Fixed ${result.fixedCount}, ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} remain — hover for details`
       : `⚠ Cross-checked — ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} could not be auto-fixed` },
@@ -4241,9 +4396,7 @@ function setVerifyBadge(result) {
   };
   const m = map[result.status] || map.unverified;
   el.className = 'verify-badge ' + m.cls;
-  el.textContent = result.skippedAI
-    ? `⚠ Local cross-check only (Groq fast-model busy) — ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} flagged`
-    : m.txt;
+  el.textContent = m.txt;
   el.title = (result.issues && result.issues.length)
     ? result.issues.map(i => `• [${i.severity || 'critical'}] ${i.where}: ${i.problem}`).join('\n')
     : 'No discrepancies found between your inputs and the generated PRD.';
@@ -4403,9 +4556,9 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     rawMarkdown = postProcessPRD(brief, stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
-    // ── STAGE 3: cross-check the PRD against the user's inputs ──
-    // (verifyAndFixPRD's first 70B call self-throttles via waitForGroqQuota only
-    //  if the window is genuinely full — no forced wait here.)
+    // ── STAGE 3: 70B cross-check — wait for quota window, then audit + repair on high model ──
+    setProgress(90, '⏳ Clearing token window for 70B cross-check…', '');
+    await waitForGroqQuota();
     const verify = await verifyAndFixPRD(brief, rawMarkdown);
     rawMarkdown = verify.markdown;
     _lastVerify = verify;
@@ -4667,7 +4820,8 @@ function fixSqlTableOrder(md) {
 // is rate-limited or skipped.
 function postProcessPRD(brief, md) {
   if (!md) return md;
-  let out = fixSqlTableOrder(md);
+  let out = applyLocalFixes(brief, md);
+  out = fixSqlTableOrder(out);
   out = dedupePRDContent(out);
   const isNext = /next\.js|nextjs|\bnext\b/i.test((brief && brief.frontend) || '');
   if (isNext) {

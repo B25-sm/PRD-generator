@@ -1746,10 +1746,10 @@ footer a:hover { color: var(--accent2); }
 // ═══════════════════════════════════════════════════════════
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL        = 'llama-3.3-70b-versatile';
-// Audit/fix run on a separate, faster model. Groq meters each model on its OWN
-// token-per-minute bucket, so the cross-check keeps working even when the main
-// 70B model is rate-limited — this is what stops verification from being skipped.
-const AUDIT_MODEL  = 'llama-3.1-8b-instant';
+// Fast model — separate Groq token bucket. Used for Stage 1, audit, and repairs so
+// ONE 70B call (full PRD generation) is the only heavy hit per PRD on free tier.
+const FAST_MODEL   = 'llama-3.1-8b-instant';
+const AUDIT_MODEL  = FAST_MODEL;
 const MAX_TOKENS   = 8192;
 
 // ═══════════════════════════════════════════════════════════
@@ -2504,7 +2504,7 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
 - NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
 ${isNext ? `- Next.js frontend rules: App Router (NOT React Router); built-in bundler (NOT standalone Webpack/Vite); env vars use NEXT_PUBLIC_* (NEVER VITE_*); dev port 3000 (NOT 5173).` : ''}
-${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status.` : ''}
+${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status.` : `- NOT food/e-commerce: do NOT add menu_items, order_items, orders, or restaurant/delivery tables unless the user explicitly asked for them.`}
 ${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
 ${/cloudinary/i.test(brief.otherTools || '') ? `- Cloudinary MUST appear in: image URL columns in schema, upload endpoint, CLOUDINARY_* env vars.` : ''}
 ${/sendgrid/i.test(brief.otherTools || '') ? `- SendGrid MUST appear in: email row in backend table, SENDGRID_API_KEY env var, order-confirmation email in business rules.` : ''}
@@ -3522,6 +3522,38 @@ function validateTechField(inputId) {
   return true;
 }
 
+// Cross-field rules: auth must match backend runtime.
+function stackComboError(brief) {
+  const be = ((brief && brief.backend) || document.getElementById('tc-backend')?.value || '').toLowerCase();
+  const auth = ((brief && brief.auth) || document.getElementById('tc-auth')?.value || '').toLowerCase();
+  if (!be || !auth) return '';
+  const isJava = /spring|java|kotlin/.test(be);
+  const isNode = /node|express|nest/.test(be);
+  if (isJava && /passport|nextauth|next-auth|auth\.js/.test(auth))
+    return 'Passport.js / NextAuth cannot run on a Spring/Java backend — use JWT + Spring Security.';
+  if (isNode && /spring security|hibernate|devise/.test(auth))
+    return 'Spring Security / Devise cannot run on a Node backend — use JWT + Passport.js or NextAuth.';
+  return '';
+}
+
+function validateStackCombo(brief) {
+  const msg = stackComboError(brief);
+  const authEl = document.getElementById('tc-auth');
+  const authErr = document.getElementById('tc-auth-err');
+  if (!authEl) return !msg;
+  if (msg) {
+    authEl.classList.add('invalid');
+    if (authErr) { authErr.textContent = '⚠ ' + msg; authErr.classList.add('show'); }
+    return false;
+  }
+  if (authErr && authErr.textContent.includes('cannot run on')) {
+    authErr.textContent = '';
+    authErr.classList.remove('show');
+    authEl.classList.remove('invalid');
+  }
+  return true;
+}
+
 // Validate every category field of the active domain; returns first invalid id or null.
 function validateAllTechFields() {
   const d = getDomain(currentDomainId);
@@ -3529,6 +3561,12 @@ function validateAllTechFields() {
   d.stackFields.forEach(f => {
     if (!validateTechField('tc-' + f.key) && !firstInvalid) firstInvalid = 'tc-' + f.key;
   });
+  const brief = { domain: currentDomainId };
+  d.stackFields.forEach(f => {
+    const el = document.getElementById('tc-' + f.key);
+    if (el) brief[f.key] = el.value;
+  });
+  if (!validateStackCombo(brief) && !firstInvalid) firstInvalid = 'tc-auth';
   return firstInvalid;
 }
 
@@ -3581,7 +3619,7 @@ function renderBriefCard(brief) {
   grid.innerHTML = d.stackFields.map(f => `
     <div class="tech-field">
       <label class="tech-label">${f.label}</label>
-      <input class="tech-input" id="tc-${f.key}" ${f.cat ? `data-cat="${f.cat}"` : ''} oninput="validateTechField('tc-${f.key}')" placeholder="${f.placeholder}" />
+      <input class="tech-input" id="tc-${f.key}" ${f.cat ? `data-cat="${f.cat}"` : ''} oninput="validateTechField('tc-${f.key}');${f.key === 'backend' || f.key === 'auth' ? 'validateStackCombo()' : ''}" placeholder="${f.placeholder}" />
       <div class="tech-error" id="tc-${f.key}-err"></div>
     </div>`).join('');
 
@@ -3654,7 +3692,8 @@ async function generatePRD() {
       systemPrompt: 'You are an expert software product analyst. Expand project ideas into complete briefs with INTERNALLY CONSISTENT tech stacks — auth must match backend runtime (Spring Boot → JWT + Spring Security, never NextAuth on Spring). Always respond with valid raw JSON only. No markdown fences, no explanation.',
       userPrompt: buildExpandPrompt(idea),
       maxTokens: 900,
-      temperature: 0.25
+      temperature: 0.25,
+      model: FAST_MODEL  // fast bucket — keeps Stage 1 off the 70B quota
     });
 
     document.getElementById('progress-area').style.display = 'none';
@@ -3788,6 +3827,9 @@ function localPRDAudit(brief, md) {
     const featAll = ((brief.coreFeatures || []).join(' ') + ' ' + brief.projectName + ' ' + (brief.oneLiner || '')).toLowerCase();
     const isFood  = /food|restaurant|menu|delivery|meal|order hub/.test(featAll);
     const isEcom  = /e-?commerce|marketplace|shop|cart|checkout|product|store/.test(featAll);
+
+    if (!(isFood || isEcom) && /CREATE TABLE\s+menu_items|\/menu-items|menu_items table/i.test(text))
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'menu_items / menu API appears but this is not a food-delivery or e-commerce app.', fix: 'Remove menu_items table and menu-item endpoints; use domain tables (e.g. posts, comments for a blog).' });
 
     if (isJava && /\|\s*Authentication\s*\|[^|\n]*NextAuth/i.test(text))
       issues.push({ severity: 'critical', where: 'Tech Stack / Backend', problem: 'Backend Authentication row lists NextAuth but backend is Spring Boot.', fix: 'Replace with Spring Security + JWT in the backend table; NextAuth is frontend-only.' });
@@ -4068,29 +4110,42 @@ async function fixSection(brief, sectionText, issues) {
     userPrompt: user,
     maxTokens: budgetMaxTokens(sys, user, 2400),
     temperature: 0.15,
-    model: MODEL   // high model does the repair
+    model: FAST_MODEL   // repairs on fast bucket — 70B is reserved for generation only
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
   return { text: out, tokens: res.usage?.total_tokens || 0 };
 }
 
-// Stage 3 — AI verification & repair LOOP, entirely on the high model.
-// Audits the PRD, fixes ONLY the broken sections (each request stays well under
-// Groq's token ceiling), then RE-AUDITS — repeating until the document is clean
-// or we hit the round cap. Rate-limit waits show a live countdown (see callGroq).
+// Stage 3 — cross-check & repair. Audit + fixes use FAST_MODEL so the ONLY 70B
+// call in a PRD is the main generation — free tier gets 1 heavy wait, not six.
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
   let totalFixed = 0;
   let lastIssues = [];
-  const MAX_ROUNDS = 2;
+  const MAX_ROUNDS = 1;
+  const pausesSoFar = _rateLimitSession.pauseCount || 0;
+
+  // Always run the free local audit first.
+  let issues = localPRDAudit(brief, md);
+  lastIssues = issues;
+
+  // Already rate-limited this PRD → skip ALL further Groq calls; deliver with local fixes only.
+  if (pausesSoFar >= 1) {
+    return {
+      markdown: postProcessPRD(brief, md),
+      tokens: 0,
+      status: issues.some(i => (i.severity || 'critical') === 'critical') ? 'partial' : 'verified',
+      issues: issues.filter(i => (i.severity || 'critical') === 'critical'),
+      fixedCount: 0,
+      skippedVerify: true
+    };
+  }
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    // ── Audit on the HIGH model, plus the free local audit as an extra signal ──
-    let issues = localPRDAudit(brief, md);
     let auditOk = true;
     try {
-      setProgress(round === 1 ? 92 : 95, `🔎 Cross-checking against your inputs (pass ${round}/${MAX_ROUNDS})…`, '');
+      setProgress(92, '🔎 Cross-checking against your inputs…', '');
       const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
       const auditUser = buildAuditPrompt(brief, md);
       const audit = await callGroq({
@@ -4098,7 +4153,7 @@ async function verifyAndFixPRD(brief, md) {
         userPrompt: auditUser,
         maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
         temperature: 0.0,
-        model: AUDIT_MODEL // separate token bucket → detection adds no quota wait
+        model: FAST_MODEL
       });
       tokens += audit.usage?.total_tokens || 0;
       const parsed = parseAuditJSON(audit.text);
@@ -4107,24 +4162,25 @@ async function verifyAndFixPRD(brief, md) {
       console.warn(`Audit pass ${round} failed:`, e);
       auditOk = false;
       if (issues.length === 0) {
-        // Couldn't reach the auditor and nothing local — report honestly.
         return { markdown: md, tokens, status: totalFixed ? 'corrected' : 'unverified', issues: [], fixedCount: totalFixed };
       }
     }
 
-    // De-dupe issues.
     const seen = new Set();
     issues = issues.filter(i => { const k = (i.where || '') + '|' + (i.problem || ''); if (seen.has(k)) return false; seen.add(k); return true; });
     lastIssues = issues;
     const critical = issues.filter(i => (i.severity || 'critical') === 'critical');
 
-    // ── Clean? Done. ──
     if (!critical.length) {
       return { markdown: md, tokens, status: totalFixed ? 'corrected' : (auditOk ? 'verified' : 'corrected'), issues, fixedCount: totalFixed };
     }
 
-    // ── Section-targeted repair ──
-    setProgress(96, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''} (pass ${round}/${MAX_ROUNDS})…`, '');
+    // Another pause fired during audit → stop here, don't chain more API calls.
+    if ((_rateLimitSession.pauseCount || 0) >= 1) {
+      return { markdown: postProcessPRD(brief, md), tokens, status: 'partial', issues: critical, fixedCount: totalFixed, skippedVerify: true };
+    }
+
+    setProgress(96, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
     const parts = splitPRDSections(md);
     const bucket = new Map();
     critical.forEach(issue => {
@@ -4135,16 +4191,16 @@ async function verifyAndFixPRD(brief, md) {
     });
 
     if (!bucket.size) {
-      // Could not localise the issues to any section → stop, report honestly.
       return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
     }
 
+    // Cap at 2 section repairs per PRD to avoid a burst of API calls.
     let appliedAny = false;
-    for (const [ix, sectionIssues] of bucket) {
+    const repairEntries = [...bucket.entries()].slice(0, 2);
+    for (const [ix, sectionIssues] of repairEntries) {
       try {
         const fixed = await fixSection(brief, parts[ix].text, sectionIssues);
         tokens += fixed.tokens;
-        // Accept only a plausible corrected section (starts with ## and isn't truncated away).
         if (fixed.text && /^##\s+/.test(fixed.text) && fixed.text.length > parts[ix].text.length * 0.5) {
           parts[ix].text = '\n' + fixed.text.trim() + '\n';
           appliedAny = true;
@@ -4152,16 +4208,15 @@ async function verifyAndFixPRD(brief, md) {
       } catch (e) {
         console.warn('Section fix failed for', parts[ix].heading, e);
       }
+      if ((_rateLimitSession.pauseCount || 0) >= 1) break;
     }
 
     md = postProcessPRD(brief, parts.map(p => p.text).join(''));
     totalFixed += critical.length;
 
     if (!appliedAny) {
-      // Nothing could be applied this round (e.g. repeated rate-limit) → report.
       return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
     }
-    // else: loop and RE-AUDIT the repaired document.
   }
 
   // Rounds exhausted — final free check to set an honest badge.
@@ -4203,7 +4258,10 @@ async function confirmAndGenerate() {
     const el = document.getElementById(firstInvalid);
     el.focus();
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    showError('⚠️ Please fix the highlighted tech-stack field(s) before generating — a value there belongs to a different category.');
+    const comboMsg = stackComboError(_currentBrief);
+    showError(comboMsg
+      ? '⚠️ ' + comboMsg
+      : '⚠️ Please fix the highlighted tech-stack field(s) before generating — a value there belongs to a different category.');
     return;
   }
 
@@ -4443,8 +4501,11 @@ function waitWithCountdown(totalSec, opts = {}) {
   const budget = totalBudgetSec || estimateTotalWaitAllAttempts();
   const R = 22, C = 2 * Math.PI * R;
   _rateLimitWaiting = true;
-  _rateLimitSession.pauseCount = (_rateLimitSession.pauseCount || 0) + 1;
-  const pauseNo = _rateLimitSession.pauseCount;
+  // Only count real Groq 429 limit hits as a "pause" — proactive quota refresh is
+  // routine housekeeping, not a failure the user should dread seeing stack up.
+  const countsAsPause = (mode === 'retry' || mode === 'tpm-reset');
+  if (countsAsPause) _rateLimitSession.pauseCount = (_rateLimitSession.pauseCount || 0) + 1;
+  const pauseNo = _rateLimitSession.pauseCount || 0;
   const priorWaited = _rateLimitSession.elapsedSec || 0;
 
   return new Promise(resolve => {
@@ -4473,7 +4534,7 @@ function waitWithCountdown(totalSec, opts = {}) {
         : `Attempt ${attempt} of ${maxAttempts}`;
       const attemptRow =
         `<div class="attempt-track">` +
-          `<span class="attempt-count">Pause #${pauseNo} this PRD</span>` +
+          (countsAsPause ? `<span class="attempt-count">Pause #${pauseNo} this PRD</span>` : `<span class="attempt-count">Quota refresh</span>`) +
           (singleWait ? '' : `<span class="attempt-pips">${pips}</span>`) +
           `<span class="attempt-sub">${attemptLabel} · ${totalWaitedFmt} waited so far</span>` +
         `</div>`;

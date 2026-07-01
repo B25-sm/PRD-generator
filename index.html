@@ -2502,6 +2502,7 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - Production Architecture diagram database MUST be "${dbHost}" — do not substitute Supabase/other unless the database field says so.
 - "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
 - State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
+- NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
 ${isNext ? `- Next.js frontend rules: App Router (NOT React Router); built-in bundler (NOT standalone Webpack/Vite); env vars use NEXT_PUBLIC_* (NEVER VITE_*); dev port 3000 (NOT 5173).` : ''}
 ${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status.` : ''}
 ${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
@@ -3879,6 +3880,33 @@ function localPRDAudit(brief, md) {
     }
   });
 
+  // Duplicate sections/subsections — common when the repair pass appends instead of editing.
+  const subHeads = text.match(/^###\s+.+$/gm) || [];
+  const subSeen = new Map();
+  subHeads.forEach(h => { const k = h.trim().toLowerCase(); subSeen.set(k, (subSeen.get(k) || 0) + 1); });
+  [...subSeen.entries()].filter(([, n]) => n >= 2).slice(0, 3).forEach(([k, n]) => {
+    issues.push({
+      severity: 'critical',
+      where: k.replace(/^###\s+/, ''),
+      problem: `Subsection appears ${n} times (duplicated content).`,
+      fix: 'Keep one version only — remove the duplicate copy.'
+    });
+  });
+  const topHeads = text.match(/^##\s+.+$/gm) || [];
+  const topSeen = new Map();
+  topHeads.forEach(h => {
+    const k = h.replace(/^##\s+\d+\.\s*/, '').trim().toLowerCase();
+    topSeen.set(k, (topSeen.get(k) || 0) + 1);
+  });
+  [...topSeen.entries()].filter(([, n]) => n >= 2).slice(0, 2).forEach(([k]) => {
+    issues.push({
+      severity: 'critical',
+      where: k,
+      problem: `Section "${k}" appears more than once in the document.`,
+      fix: 'Merge into a single section — remove duplicate blocks.'
+    });
+  });
+
   // De-dupe
   const seen = new Set();
   return issues.filter(i => { const k = i.where + '|' + i.problem; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -3908,6 +3936,7 @@ CHECK FOR THESE VIOLATIONS ONLY:
 8. DOMAIN INCOMPLETE: food/e-commerce app missing menu_items/products, order_items, order status, or Stripe payment endpoints when Stripe is listed.
 9. GENERIC FILLER: a "Why Chosen"/rationale that is boilerplate ("easy to use", "fast and reliable", "industry-standard", "scalable and maintainable") or the SAME rationale copy-pasted across multiple rows instead of project-specific reasons. (severity: minor)
 10. ANY OTHER OBJECTIVE INCONSISTENCY between the inputs and the document that a careful engineer would flag, even if not listed above. Describe it concretely. (Use this to catch issues the fixed rules above don't name — but stay objective, never nitpick style.)
+11. DUPLICATE CONTENT: the same list, table, checklist, endpoint set, schema table, or ### subsection repeated twice in the same section (e.g. Goals as both prose and bullets; Build Order tasks listed twice; Request Flow steps duplicated). (severity: critical)
 
 GENERATED PRD:
 """
@@ -4008,6 +4037,11 @@ function buildSectionFixPrompt(brief, sectionText, issues) {
   const stackLines = dom.stackFields.map(f => `- ${f.label}: ${brief[f.key] || '(not set)'}`).join('\n');
   const issueLines = issues.map((i, n) => `${n + 1}. ${i.problem} → FIX: ${i.fix}`).join('\n');
   return `You are correcting ONE section of a PRD. Apply every fix below and return ONLY this section's corrected Markdown — same heading, same professional style. You MAY add rows, tables, columns, or endpoints WITHIN this section as the fixes require. Do NOT add other sections or commentary.
+
+CRITICAL — NO DUPLICATION:
+- Edit in place. Do NOT append a second copy of any table, list, SQL block, or ### subsection.
+- Each ### subsection heading appears at most once. Each checklist item, goal, and endpoint appears once.
+- If content already exists, UPDATE it — never paste a duplicate version below it.
 
 USER INPUTS (source of truth):
 Project: ${brief.projectName}
@@ -4569,6 +4603,7 @@ function fixSqlTableOrder(md) {
 function postProcessPRD(brief, md) {
   if (!md) return md;
   let out = fixSqlTableOrder(md);
+  out = dedupePRDContent(out);
   const isNext = /next\.js|nextjs|\bnext\b/i.test((brief && brief.frontend) || '');
   if (isNext) {
     // Vite env vars do not exist in Next.js — drop any VITE_* env-var table rows…
@@ -4577,6 +4612,44 @@ function postProcessPRD(brief, md) {
     out = out.replace(/\bVITE_([A-Z0-9_]+)\b/g, 'NEXT_PUBLIC_$1');
   }
   return out;
+}
+
+// Within one section body, drop repeated ### subsections (keep the longest version).
+function dedupeSubsectionsInSection(sectionText) {
+  const chunks = sectionText.split(/(?=^###\s+)/m);
+  if (chunks.length <= 1) return sectionText;
+  const header = chunks[0];
+  const order = [];
+  const subs = new Map();
+  for (let i = 1; i < chunks.length; i++) {
+    const m = chunks[i].match(/^###\s+(.+?)(?:\r?\n|$)/);
+    if (!m) continue;
+    const key = m[1].trim().toLowerCase();
+    if (!subs.has(key)) order.push(key);
+    const prev = subs.get(key);
+    if (!prev || chunks[i].length > prev.length) subs.set(key, chunks[i]);
+  }
+  return header + order.map(k => subs.get(k)).join('');
+}
+
+// Merge duplicate top-level ## sections and dedupe ### subsections inside each.
+function dedupePRDContent(md) {
+  const parts = splitPRDSections(md);
+  const merged = [];
+  const indexByKey = new Map();
+  for (const p of parts) {
+    if (!p.heading) { merged.push(p); continue; }
+    const key = p.heading.toLowerCase().replace(/^\d+\.\s*/, '').replace(/\s+/g, ' ').trim();
+    if (indexByKey.has(key)) {
+      const ix = indexByKey.get(key);
+      const extra = p.text.replace(/^##[^\n]*\n?/, '').trim();
+      if (extra) merged[ix].text = merged[ix].text.trimEnd() + '\n\n' + extra + '\n';
+    } else {
+      indexByKey.set(key, merged.length);
+      merged.push({ heading: p.heading, text: p.text });
+    }
+  }
+  return merged.map(p => dedupeSubsectionsInSection(p.text)).join('');
 }
 
 function reorderCreateTables(sql) {
@@ -4751,21 +4824,11 @@ async function downloadPDF() {
     const MARGIN_PT = 36; // 0.5 inch margin
     const CONTENT_H_PT = PDF_H_PT - MARGIN_PT * 2;
 
-    // ── Collect all "avoid-break" blocks ──
-    // Each block = an element that must not be split across pages
-    const blockSelectors = [
-      'h1', 'h2', 'h3', 'h4',
-      'table', 'pre', 'blockquote',
-      'p', 'ul', 'ol', 'li'
-    ];
-
-    const elements = Array.from(iBody.querySelectorAll(blockSelectors.join(',')))
-      .filter(el => {
-        // Skip elements nested inside table cells / pre (they'll be captured by the parent)
-        const parent = el.parentElement;
-        return !(parent.tagName === 'TD' || parent.tagName === 'TH' ||
-                 parent.tagName === 'PRE' || parent.tagName === 'LI');
-      });
+    // ── Collect top-level blocks only (body children). Never also capture nested
+    // <li> — that duplicated every checklist item and numbered step in the PDF.
+    const elements = Array.from(iBody.children).filter(el =>
+      /^(H1|H2|H3|H4|TABLE|PRE|BLOCKQUOTE|UL|OL|P|HR|DIV)$/i.test(el.tagName)
+    );
 
     // ── Render each "block" independently and place on pages ──
     let currentPageY = MARGIN_PT; // current Y position on the PDF page (in pt)

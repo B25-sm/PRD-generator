@@ -1818,7 +1818,7 @@ const EXAMPLES = [
 let rawMarkdown = '';
 let _lastVerify = null;
 let _rateLimitWaiting = false; // true while rate-limit countdown is active
-let _rateLimitSession = { budgetSec: 0, elapsedSec: 0, pauseCount: 0 }; // cumulative wait across pauses in one generation
+let _rateLimitSession = { budgetSec: 0, elapsedSec: 0, pauseCount: 0, fastPaused: false, heavyPaused: false };
 let _genPhase = 'generate'; // 'understand' (Stage 1) or 'generate' (Stage 2+) — for wait messaging
 let apiKey = localStorage.getItem(STORAGE_KEY_API) || '';
 
@@ -3289,6 +3289,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const fallbackSec = Math.ceil(Math.min(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount), GROQ_LIMITS.maxBackoffMs) / 1000);
     const waitSec = (serverWaitSec && serverWaitSec > 0) ? Math.min(serverWaitSec, MAX_AUTO_WAIT_SEC) : fallbackSec;
     const longWait = waitSec > 75; // a known, longer refill → show the calm full-timer animation
+    if (model === MODEL) _rateLimitSession.heavyPaused = true;
+    else _rateLimitSession.fastPaused = true;
 
     if (!_rateLimitSession.budgetSec) _rateLimitSession.budgetSec = estimateTotalWaitAllAttempts();
     const phaseTag = (_genPhase === 'understand') ? 'understanding your idea' : 'generating PRD';
@@ -4117,70 +4119,69 @@ async function fixSection(brief, sectionText, issues) {
   return { text: out, tokens: res.usage?.total_tokens || 0 };
 }
 
-// Stage 3 — cross-check & repair. Audit + fixes use FAST_MODEL so the ONLY 70B
-// call in a PRD is the main generation — free tier gets 1 heavy wait, not six.
+// Stage 3 — cross-check & repair.
+// • Local rule audit ALWAYS runs (free, deterministic).
+// • AI semantic audit + section repairs use FAST_MODEL (separate Groq bucket from 70B).
+// • A 70B pause during generation does NOT skip cross-check — only a fast-model pause does.
+// • Two rounds: audit+fix, then local re-check + fix any remaining (no second AI audit).
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
-  let totalFixed = 0;
-  let lastIssues = [];
-  const MAX_ROUNDS = 1;
-  const pausesSoFar = _rateLimitSession.pauseCount || 0;
-
-  // Always run the free local audit first.
-  let issues = localPRDAudit(brief, md);
-  lastIssues = issues;
-
-  // Already rate-limited this PRD → skip ALL further Groq calls; deliver with local fixes only.
-  if (pausesSoFar >= 1) {
-    return {
-      markdown: postProcessPRD(brief, md),
-      tokens: 0,
-      status: issues.some(i => (i.severity || 'critical') === 'critical') ? 'partial' : 'verified',
-      issues: issues.filter(i => (i.severity || 'critical') === 'critical'),
-      fixedCount: 0,
-      skippedVerify: true
-    };
-  }
+  let appliedFixes = 0;
+  let aiAuditRan = false;
+  const MAX_ROUNDS = 2;
+  const MAX_SECTIONS_PER_ROUND = 4;
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
-    let auditOk = true;
-    try {
-      setProgress(92, '🔎 Cross-checking against your inputs…', '');
-      const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
-      const auditUser = buildAuditPrompt(brief, md);
-      const audit = await callGroq({
-        systemPrompt: auditSys,
-        userPrompt: auditUser,
-        maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
-        temperature: 0.0,
-        model: FAST_MODEL
-      });
-      tokens += audit.usage?.total_tokens || 0;
-      const parsed = parseAuditJSON(audit.text);
-      if (parsed && parsed.issues.length) issues = issues.concat(parsed.issues.filter(i => i && i.problem));
-    } catch (e) {
-      console.warn(`Audit pass ${round} failed:`, e);
-      auditOk = false;
-      if (issues.length === 0) {
-        return { markdown: md, tokens, status: totalFixed ? 'corrected' : 'unverified', issues: [], fixedCount: totalFixed };
+    let issues = localPRDAudit(brief, md);
+
+    // AI semantic audit — round 1 only, fast model (unaffected by 70B quota exhaustion).
+    if (round === 1 && !_rateLimitSession.fastPaused) {
+      try {
+        setProgress(92, '🔎 Cross-checking against your inputs…', '');
+        const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
+        const auditUser = buildAuditPrompt(brief, md);
+        const audit = await callGroq({
+          systemPrompt: auditSys,
+          userPrompt: auditUser,
+          maxTokens: budgetMaxTokens(auditSys, auditUser, 1800),
+          temperature: 0.0,
+          model: FAST_MODEL
+        });
+        tokens += audit.usage?.total_tokens || 0;
+        aiAuditRan = true;
+        const parsed = parseAuditJSON(audit.text);
+        if (parsed && parsed.issues.length) issues = issues.concat(parsed.issues.filter(i => i && i.problem));
+      } catch (e) {
+        console.warn(`AI audit failed (round ${round}):`, e);
+        if (_rateLimitSession.fastPaused && issues.length === 0) {
+          return { markdown: postProcessPRD(brief, md), tokens, status: 'unverified', issues: [], fixedCount: 0 };
+        }
       }
+    } else if (round === 1) {
+      setProgress(92, '🔎 Cross-checking (local rules — fast-model quota busy)…', '');
+    } else {
+      setProgress(95, '🔎 Re-checking after repairs…', '');
     }
 
     const seen = new Set();
     issues = issues.filter(i => { const k = (i.where || '') + '|' + (i.problem || ''); if (seen.has(k)) return false; seen.add(k); return true; });
-    lastIssues = issues;
     const critical = issues.filter(i => (i.severity || 'critical') === 'critical');
 
     if (!critical.length) {
-      return { markdown: md, tokens, status: totalFixed ? 'corrected' : (auditOk ? 'verified' : 'corrected'), issues, fixedCount: totalFixed };
+      return {
+        markdown: md,
+        tokens,
+        status: appliedFixes ? 'corrected' : (aiAuditRan ? 'verified' : 'corrected'),
+        issues: issues.filter(i => (i.severity || 'critical') !== 'critical'),
+        fixedCount: appliedFixes
+      };
     }
 
-    // Another pause fired during audit → stop here, don't chain more API calls.
-    if ((_rateLimitSession.pauseCount || 0) >= 1) {
-      return { markdown: postProcessPRD(brief, md), tokens, status: 'partial', issues: critical, fixedCount: totalFixed, skippedVerify: true };
+    if (_rateLimitSession.fastPaused) {
+      return { markdown: postProcessPRD(brief, md), tokens, status: 'partial', issues: critical, fixedCount: appliedFixes, skippedAI: true };
     }
 
-    setProgress(96, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
+    setProgress(round === 1 ? 96 : 97, `🛠 Repairing ${critical.length} issue${critical.length > 1 ? 's' : ''} (round ${round})…`, '');
     const parts = splitPRDSections(md);
     const bucket = new Map();
     critical.forEach(issue => {
@@ -4191,39 +4192,38 @@ async function verifyAndFixPRD(brief, md) {
     });
 
     if (!bucket.size) {
-      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
+      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
     }
 
-    // Cap at 2 section repairs per PRD to avoid a burst of API calls.
-    let appliedAny = false;
-    const repairEntries = [...bucket.entries()].slice(0, 2);
-    for (const [ix, sectionIssues] of repairEntries) {
+    let roundApplied = 0;
+    for (const [ix, sectionIssues] of [...bucket.entries()].slice(0, MAX_SECTIONS_PER_ROUND)) {
       try {
         const fixed = await fixSection(brief, parts[ix].text, sectionIssues);
         tokens += fixed.tokens;
         if (fixed.text && /^##\s+/.test(fixed.text) && fixed.text.length > parts[ix].text.length * 0.5) {
           parts[ix].text = '\n' + fixed.text.trim() + '\n';
-          appliedAny = true;
+          roundApplied += sectionIssues.length;
         }
       } catch (e) {
         console.warn('Section fix failed for', parts[ix].heading, e);
       }
-      if ((_rateLimitSession.pauseCount || 0) >= 1) break;
+      if (_rateLimitSession.fastPaused) break;
     }
 
-    md = postProcessPRD(brief, parts.map(p => p.text).join(''));
-    totalFixed += critical.length;
-
-    if (!appliedAny) {
-      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: totalFixed };
+    if (roundApplied) {
+      md = postProcessPRD(brief, parts.map(p => p.text).join(''));
+      appliedFixes += roundApplied;
+    } else if (round === MAX_ROUNDS) {
+      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
+    } else {
+      break; // nothing applied round 1 — don't spin round 2
     }
   }
 
-  // Rounds exhausted — final free check to set an honest badge.
   const remaining = localPRDAudit(brief, md).filter(i => (i.severity || 'critical') === 'critical');
   return remaining.length
-    ? { markdown: md, tokens, status: 'partial', issues: remaining, fixedCount: totalFixed }
-    : { markdown: md, tokens, status: totalFixed ? 'corrected' : 'verified', issues: lastIssues.filter(i => (i.severity || 'critical') !== 'critical'), fixedCount: totalFixed };
+    ? { markdown: md, tokens, status: 'partial', issues: remaining, fixedCount: appliedFixes }
+    : { markdown: md, tokens, status: appliedFixes ? 'corrected' : 'verified', issues: [], fixedCount: appliedFixes };
 }
 
 // Build the verification badge shown in the output toolbar.
@@ -4232,14 +4232,18 @@ function setVerifyBadge(result) {
   if (!el) return;
   const map = {
     verified:   { cls: 'ok',   txt: '✓ Cross-checked — matches your inputs' },
-    corrected:  { cls: 'ok',   txt: `✓ Cross-checked & auto-corrected ${result.fixedCount} issue${result.fixedCount > 1 ? 's' : ''}` },
-    partial:    { cls: 'warn', txt: `⚠ Cross-checked — ${result.issues.length} issue${result.issues.length > 1 ? 's' : ''} could not be fully auto-fixed` },
-    flagged:    { cls: 'warn', txt: `⚠ Cross-check found ${result.issues.length} issue${result.issues.length > 1 ? 's' : ''} — review highlighted points` },
+    corrected:  { cls: 'ok',   txt: `✓ Cross-checked & auto-corrected ${result.fixedCount} issue${result.fixedCount !== 1 ? 's' : ''}` },
+    partial:    { cls: 'warn', txt: result.fixedCount
+      ? `⚠ Fixed ${result.fixedCount}, ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} remain — hover for details`
+      : `⚠ Cross-checked — ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} could not be auto-fixed` },
+    flagged:    { cls: 'warn', txt: `⚠ Cross-check found ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} — review highlighted points` },
     unverified: { cls: 'warn', txt: '⚠ Could not cross-check (rate limit) — please review' }
   };
   const m = map[result.status] || map.unverified;
   el.className = 'verify-badge ' + m.cls;
-  el.textContent = m.txt;
+  el.textContent = result.skippedAI
+    ? `⚠ Local cross-check only (Groq fast-model busy) — ${result.issues.length} issue${result.issues.length !== 1 ? 's' : ''} flagged`
+    : m.txt;
   el.title = (result.issues && result.issues.length)
     ? result.issues.map(i => `• [${i.severity || 'critical'}] ${i.where}: ${i.problem}`).join('\n')
     : 'No discrepancies found between your inputs and the generated PRD.';
@@ -4444,7 +4448,7 @@ function hideRateWaitPanel() {
 }
 
 function resetRateLimitSession() {
-  _rateLimitSession = { budgetSec: 0, elapsedSec: 0, pauseCount: 0 };
+  _rateLimitSession = { budgetSec: 0, elapsedSec: 0, pauseCount: 0, fastPaused: false, heavyPaused: false };
   hideRateWaitPanel();
 }
 

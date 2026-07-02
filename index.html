@@ -1778,8 +1778,14 @@ const GROQ_LIMITS = {
   // Requests/min Groq allows: 30. We use 2 per PRD (Stage 1 + Stage 2).
   // Cap to 3 PRDs/min absolute max = 6 API calls/min, well under 30.
   maxReqPerMin: 3,          // client-side PRD generations per minute
-  maxReqPerHour: 20,        // conservative hourly cap (Groq allows 14,400/day)
-  maxReqPerDay: 100,        // daily cap — 100 PRDs/day uses ~1.2M tokens, well under daily limit
+  maxReqPerHour: 20,        // conservative hourly cap (Groq's RPD for this model is 1,000)
+  // This 100/day request cap is a soft guard, not the real ceiling: Groq's actual
+  // constraint is 100,000 TOKENS/day (TPD) for llama-3.3-70b-versatile, and one PRD
+  // (generate + audit + repair) runs ~25-30k tokens — so the real daily wall arrives
+  // after ~3-4 PRDs, well before 100 requests. By design we don't track/block on TPD
+  // client-side; Groq's own 429 (see groqDailyCapError) is the natural stopping point,
+  // and its message already tells the user to add a different API key to continue.
+  maxReqPerDay: 100,
 
   // Retry settings for 429 responses. We honour Groq's Retry-After header when
   // present; otherwise back off exponentially but CAP each wait — waiting one full

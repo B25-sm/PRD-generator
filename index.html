@@ -4383,13 +4383,16 @@ async function repairWithHighModel(brief, md, critical, parts, bucket) {
 }
 
 // Stage 3 — high-quality cross-check on VERIFY_MODEL (70B).
-// Flow per round: local fixes → local audit → 70B semantic audit → 70B repair (whole-doc,
-// batch, or section fallback). Up to 3 rounds with re-audit until clean or limits hit.
+// Flow: local fixes → local audit → 70B semantic audit → 70B repair (whole-doc,
+// batch, or section fallback) → zero-token local re-check. Kept to a single round
+// on purpose: each 70B pass re-feeds the whole ~8k-token doc, and on Groq's free
+// tier (12k TPM) extra rounds are what turn a run into a 20–30 min quota-wait grind.
+// One audit + one repair catches the critical issues without exhausting the minute.
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
   let appliedFixes = 0;
   let aiAuditRan = false;
-  const MAX_ROUNDS = 3;
+  const MAX_ROUNDS = 1;
 
   md = applyLocalFixes(brief, md);
 
@@ -4432,9 +4435,10 @@ async function verifyAndFixPRD(brief, md) {
       };
     }
 
-    if (round === MAX_ROUNDS) {
-      return { markdown: md, tokens, status: 'partial', issues: critical, fixedCount: appliedFixes };
-    }
+    // Note: we no longer bail before repairing on the final round. Even the last
+    // round attempts one repair; the zero-token local re-audit after the loop
+    // (below) decides the final 'corrected' vs 'partial' status without spending
+    // another full 70B pass on re-auditing.
 
     setProgress(96, `🛠 70B repair — fixing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
     const parts = splitPRDSections(md);

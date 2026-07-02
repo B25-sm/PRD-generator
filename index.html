@@ -3314,11 +3314,11 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       `⏳ Waiting out Groq's free-tier limit while ${phaseTag} — continuing automatically…`,
       undefined
     );
-    const streakBudgetLeft = Math.max(1, EARLY_DAILY_CAP_WAIT_SEC - (_rateLimitSession.streakWaitSec || 0));
     await waitWithCountdown(waitSec, {
       attempt: _rateLimitSession.streakPauses,
       maxAttempts: EARLY_DAILY_CAP_PAUSES,
-      totalBudgetSec: longWait ? waitSec : streakBudgetLeft,
+      totalBudgetSec: longWait ? waitSec : EARLY_DAILY_CAP_WAIT_SEC,
+      priorWaitedSec: longWait ? 0 : (_rateLimitSession.streakWaitSec || 0),
       mode: longWait ? 'reset-wait' : 'retry'
     });
     _rateLimitSession.streakWaitSec = (_rateLimitSession.streakWaitSec || 0) + waitSec;
@@ -4756,6 +4756,7 @@ function waitWithCountdown(totalSec, opts = {}) {
     attempt = 1,
     maxAttempts = GROQ_LIMITS.maxRetries,
     totalBudgetSec,
+    priorWaitedSec = 0,   // wait already accumulated in THIS streak (caller-supplied)
     mode = 'retry',
     quotaUsed,
     quotaLimit
@@ -4768,7 +4769,10 @@ function waitWithCountdown(totalSec, opts = {}) {
   const countsAsPause = (mode === 'retry' || mode === 'tpm-reset');
   if (countsAsPause) _rateLimitSession.pauseCount = (_rateLimitSession.pauseCount || 0) + 1;
   const pauseNo = _rateLimitSession.pauseCount || 0;
-  const priorWaited = _rateLimitSession.elapsedSec || 0;
+  // "Waited so far" counts only THIS streak (caller supplies it), so the number the
+  // user sees always climbs toward the same daily-cap threshold shown below it —
+  // never a cumulative figure from unrelated proactive refreshes.
+  const priorWaited = priorWaitedSec;
 
   return new Promise(resolve => {
     let remaining = totalSec;
@@ -4794,11 +4798,17 @@ function waitWithCountdown(totalSec, opts = {}) {
       const attemptLabel = (mode === 'tpm-reset' || mode === 'reset-wait')
         ? `Auto-resuming when ready`
         : `Auto-retry ${attempt} of ${maxAttempts}`;
+      // Single, consistent wait meter: for a 429 streak it climbs toward the same
+      // daily-cap threshold (budget) that the line below references — one story, one
+      // number. Other modes just show this wait's own elapsed time.
+      const waitedMeter = (mode === 'retry')
+        ? `${totalWaitedFmt} of ~${budgetFmt} waited`
+        : `${totalWaitedFmt} waited so far`;
       const attemptRow =
         `<div class="attempt-track">` +
           (countsAsPause ? `<span class="attempt-count">Pause #${pauseNo} this PRD</span>` : `<span class="attempt-count">Quota refresh</span>`) +
           (singleWait ? '' : `<span class="attempt-pips">${pips}</span>`) +
-          `<span class="attempt-sub">${attemptLabel} · ${totalWaitedFmt} waited so far</span>` +
+          `<span class="attempt-sub">${attemptLabel} · ${waitedMeter}</span>` +
         `</div>`;
 
       let title, mainLine, sub;
@@ -4839,7 +4849,7 @@ function waitWithCountdown(totalSec, opts = {}) {
             attemptRow +
             `<div class="rate-wait-times left-highlight">${mainLine}</div>` +
             (mode === 'retry'
-              ? `<div class="rate-wait-times" style="margin-top:4px;font-weight:500;"><span class="dim">If it hasn't cleared in ~${budgetFmt}, that's the daily cap — you'll be told (and can add another key).</span></div>`
+              ? `<div class="rate-wait-times" style="margin-top:4px;font-weight:500;"><span class="dim">If it's still limited by then, that's the daily free-tier cap — you'll be told, and can add another key to continue now.</span></div>`
               : '') +
             `<div class="rate-wait-sub">${sub}</div>` +
           `</div>` +

@@ -4668,6 +4668,18 @@ const FILLER_FIXES = [
   { re: /provides a robust set of features/gi,     repl: 'covers the features this project needs' },
   { re: /ubiquitous and well[ -]supported/gi,      repl: 'well-supported with mature tooling' },
   { re: /ideal for complex applications/gi,        repl: 'a fit for this project’s scope' },
+  // Softer near-filler crutches the models reach for once the egregious phrases are
+  // banned ("make it a top choice", "scalable and reliable", "a natural choice", …).
+  // Order matters: the "make(s) it … choice" clause is neutralized before the bare
+  // "a … choice" pattern so it isn't half-consumed. In a Why-Chosen cell any of these
+  // triggers the same technology-specific rewrite; in prose the replacement is used.
+  { re: /\bmakes? it (?:a |an |the )?(?:top|natural|popular|solid|great|logical|obvious|smart|strong|clear|compelling|go[ -]?to|de[ -]facto) choice\b/gi, repl: 'suit this project' },
+  { re: /\b(?:a|an|the) (?:top|natural|popular|solid|great|logical|obvious|clear|compelling|go[ -]?to|de[ -]facto) choice\b/gi, repl: 'a fit here' },
+  { re: /\bscalable and reliable\b/gi,             repl: 'dependable at the expected scale' },
+  { re: /\breliable and scalable\b/gi,             repl: 'dependable at the expected scale' },
+  { re: /\bideal for rapid development\b/gi,        repl: 'well-suited to a fast build' },
+  { re: /\bpowerful and flexible\b/gi,             repl: 'flexible enough for this scope' },
+  { re: /\bmake it (?:a )?(?:natural|obvious|logical|perfect) fit\b/gi, repl: 'fit this project' },
 ];
 
 // Technology → a concrete, non-banned reason. Ordered specific-first so

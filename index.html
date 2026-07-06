@@ -1441,6 +1441,13 @@ body, header, main, footer,
   max-width: 100%;
 }
 
+/* Preserve the original compact desktop composition. The 100% width keeps it
+   fluid below 860px; the cap prevents controls from stretching on wide screens. */
+main {
+  width: 100%;
+  max-width: 860px;
+}
+
 img, svg, video, canvas, iframe { max-width: 100%; }
 button, input, textarea, select { min-width: 0; max-width: 100%; }
 .hero p, .brief-value, .step-desc, .history-sub, .history-item-name,

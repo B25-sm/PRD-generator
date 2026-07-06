@@ -2516,6 +2516,40 @@ function enforceStackConsistency(brief) {
   else if (isNode && !/jwt|oauth|passport|nextauth|next-auth|auth0|firebase|clerk|session/.test(auth))
     setAuth(isNext ? 'NextAuth.js + JWT' : 'JWT + Passport.js', 'Node default');
 
+  // JVM server-side template engines (Thymeleaf/JSP/Freemarker/Velocity) render
+  // HTML on a Java backend. They cannot run on a non-Java backend, and they are
+  // contradictory alongside a JS SPA (React/Vue/etc.) that renders client-side.
+  // Strip them from the frontend field so they don't propagate through the PRD.
+  const isSPA = /react|vue|angular|svelte|solid|preact|\bnext\b|nuxt|remix/.test(fe);
+  const JVM_TPL = /(?:\s*(?:with|and|\+|,|using)\s+)?\b(?:thymeleaf|jsp|freemarker|velocity)\b(?:\s+(?:for\s+)?templating)?/gi;
+  if ((isSPA || !isJava) && JVM_TPL.test(b.frontend || '')) {
+    JVM_TPL.lastIndex = 0;
+    const cleaned = (b.frontend || '').replace(JVM_TPL, '').replace(/\s{2,}/g, ' ').replace(/[\s,+]+$/,'').replace(/^[\s,+]+/,'').trim();
+    const why = isJava ? `redundant with a ${b.frontend.match(/react|vue|angular|svelte/i)?.[0] || 'JS SPA'} client-rendered frontend`
+                       : `a Java-only template engine that can't run on ${b.backend}`;
+    fixes.push(`Frontend: removed Thymeleaf/JSP — ${why}`);
+    b.frontend = cleaned || b.frontend;
+  }
+
+  // ORMs belong to the backend layer, not the Database name. If the user typed one
+  // into the Database field (e.g. "PostgreSQL 16 with JPA/Hibernate"), strip it — the
+  // correct ORM is inferred from the backend (Django→Django ORM, Node→Prisma, …).
+  const ORM_WORDS = /\b(jpa|hibernate|django\s*orm|prisma|sequelize|typeorm|eloquent|active\s?record|sqlalchemy|mongoose)\b/gi;
+  if (ORM_WORDS.test(b.database || '')) {
+    ORM_WORDS.lastIndex = 0;
+    const cleaned = (b.database || '')
+      .replace(/\s*(?:with|and|using|\+)\s+(?=[^,]*\b(?:jpa|hibernate|orm|prisma|sequelize|typeorm|eloquent|active|sqlalchemy|mongoose)\b)/i, ' ')
+      .replace(ORM_WORDS, '')
+      .replace(/\s*\/\s*/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/[\s,+/]+$/, '')
+      .trim();
+    if (cleaned && cleaned.toLowerCase() !== (b.database || '').toLowerCase()) {
+      fixes.push('Database: removed ORM name — the ORM belongs to the backend layer, not the database');
+      b.database = cleaned;
+    }
+  }
+
   // Hosting DB name should match database field (not invent Supabase when user said PostgreSQL)
   const db = (b.database || '').toLowerCase();
   const host = (b.hosting || '').toLowerCase();
@@ -4244,7 +4278,18 @@ function localPRDAudit(brief, md) {
 
     // A promised reviews/ratings feature must have a table
     if (/review|rating/.test(featAll) && /CREATE TABLE/i.test(text) && !/CREATE TABLE\s+(reviews|ratings)/i.test(text))
-      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Reviews/ratings is a stated feature but there is no reviews table.', fix: 'Add a reviews table (id, user_id, product_id, rating, comment, created_at) and review endpoints.' });
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Reviews/ratings is a stated feature but there is no reviews table.', fix: 'Add a reviews table (id, user_id, the reviewed entity id e.g. menu_item_id/product_id, rating, comment, created_at) with FKs, and review endpoints.' });
+
+    // Dangling foreign key: a FOREIGN KEY that references a table never CREATE'd
+    // (e.g. reviews.product_id → "products" in a food app that only has menu_items).
+    if (/CREATE TABLE/i.test(text)) {
+      const definedTables = new Set([...text.matchAll(/CREATE TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)/gi)].map(m => m[1].toLowerCase()));
+      const badRefs = new Set();
+      for (const m of text.matchAll(/REFERENCES\s+["`]?(\w+)/gi)) {
+        if (!definedTables.has(m[1].toLowerCase())) badRefs.add(m[1]);
+      }
+      badRefs.forEach(t => issues.push({ severity: 'critical', where: 'Database Schema', problem: `A FOREIGN KEY references table "${t}", which is never defined with a CREATE TABLE.`, fix: `Point the foreign key at an existing table (e.g. menu_items/restaurants for a food app), or add the missing "${t}" table.` }));
+    }
 
     // Django dev server in a production/deployment context
     if (/manage\.py\s+runserver/i.test(text) && /(production|deploy|render|ci\/cd|github actions)/i.test(text))
@@ -4757,6 +4802,23 @@ function applyLocalFixes(brief, md) {
 
   // Remove obvious auditor meta-commentary lines
   out = out.replace(/^.*\b(the provided schema seems|given the project's backend is|this section focuses on|however, this section)\b.*\n/gim, '');
+
+  // Dangling FK: a reviews/ratings table that references product_id when there is no
+  // products table (generic e-commerce template leaking into a food app that uses
+  // menu_items/restaurants). Repoint the column at a real table and add the missing FK.
+  if (/CREATE TABLE\s+reviews/i.test(out) && /\bproduct_id\b/i.test(out) && !/CREATE TABLE\s+products/i.test(out)) {
+    const target = /CREATE TABLE\s+menu_items/i.test(out) ? 'menu_items'
+                 : /CREATE TABLE\s+restaurants/i.test(out) ? 'restaurants' : null;
+    if (target) {
+      const col = target.replace(/s$/, '') + '_id'; // menu_item_id / restaurant_id
+      out = out.replace(/\bproduct_id\b/gi, col);    // schema + API request fields, consistently
+      // Add a FK for the repointed column inside the reviews block if one isn't present.
+      out = out.replace(/(CREATE TABLE\s+reviews\s*\([\s\S]*?)(\n\s*\)\s*;)/i, (full, body, close) => {
+        if (new RegExp('REFERENCES\\s+' + target, 'i').test(body)) return full;
+        return body.replace(/[\s,]*$/, '') + `,\n    FOREIGN KEY (${col}) REFERENCES ${target}(id)` + close;
+      });
+    }
+  }
 
   // Generic filler → specific, technology-aware rationale (kills the filler +
   // duplicate-rationale audit checks deterministically).

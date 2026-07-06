@@ -2632,7 +2632,7 @@ ${hasRealtime ? '### Request Flow — WebSocket\nNumbered steps 1–5: connect �
 ## 4. Backend Architecture
 ### Project Structure
 \`\`\`
-backend/ file tree — every folder/file with ← role comment
+backend/ file tree — ONLY source files you author, each with a ← role comment. Show .idea/.vscode/target/build/.git as a single collapsed line (never expand them, never list Project_Default.xml/workspace.xml or numbered variants). Keep under ~35 lines.
 \`\`\`
 ### Framework Concepts Reference
 | Concept | Definition | Role in ${brief.projectName} | Key File |
@@ -2797,7 +2797,7 @@ project-root/
 ├── .github/workflows/  ← CI/CD pipelines
 ├── docker-compose.yml
 └── .env.example
-[Expand every subdirectory with ├── └── notation and ← comments on every file]
+[Expand only source subdirectories with ├── └── notation and ← comments. Never expand .idea/.vscode/node_modules/target/build/.git — collapse each to one line. Keep under ~40 lines total.]
 \`\`\`
 
 ## 17. Build Order / Developer Checklist
@@ -3474,6 +3474,120 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   return { text, usage: data.usage, finishReason, model };
 }
 
+// ═══════════════════════════════════════════════════════════
+//  DEGENERATION GUARD — collapse a runaway repetition loop.
+//  LLMs sometimes get stuck emitting the same line with only a
+//  changing number (e.g. an .idea/ folder tree spewing
+//  Project_Default_1.xml … _20.xml hundreds of times). That eats
+//  the whole output budget and derails the rest of the document.
+//  This deterministically collapses any run of >= COLLAPSE_RUN
+//  structurally-identical siblings into the first two + a marker,
+//  so the garbage never reaches the user AND the tail we feed to a
+//  continuation stays meaningful.
+// ═══════════════════════════════════════════════════════════
+const COLLAPSE_RUN = 6; // a run this long of near-identical lines is degeneration, not real content
+
+// Signature of a line for repetition detection: digits normalized to '#',
+// tree-drawing glyphs normalized, trailing space trimmed. Returns null for
+// lines that must never be collapse candidates (blank, headings, fences, table rows).
+function repetitionSig(line) {
+  const t = line.trim();
+  if (!t) return null;
+  if (/^#{1,6}\s/.test(t)) return null;   // markdown heading
+  if (/^`{3,}/.test(t)) return null;       // code fence
+  if (t.startsWith('|')) return null;      // table row (collapsing could break a table)
+  const norm = line
+    .replace(/\d+/g, '#')                  // 1, 20, 999 → #
+    .replace(/[│├└─|`]+/g, '/')            // tree glyphs → single token
+    .replace(/\s+/g, ' ')
+    .trimEnd();
+  return /[A-Za-z#]/.test(norm) ? norm : null; // must carry some word/number content
+}
+
+function collapseRunawayRepetition(md) {
+  if (!md) return md;
+  const lines = md.split('\n');
+  const out = [];
+  let i = 0;
+  let collapsedAny = false;
+  while (i < lines.length) {
+    const sig = repetitionSig(lines[i]);
+    if (sig === null) { out.push(lines[i]); i++; continue; }
+    let j = i + 1;
+    while (j < lines.length && repetitionSig(lines[j]) === sig) j++;
+    const runLen = j - i;
+    if (runLen >= COLLAPSE_RUN) {
+      const indentMatch = lines[i].match(/^[\s│├└─|]*/);
+      const indent = indentMatch ? indentMatch[0] : '';
+      out.push(lines[i], lines[i + 1], `${indent}… (+${runLen - 2} similar entries collapsed)`);
+      collapsedAny = true;
+      i = j;
+    } else {
+      for (let k = i; k < j; k++) out.push(lines[k]);
+      i = j;
+    }
+  }
+  if (collapsedAny) console.warn('collapseRunawayRepetition: collapsed a runaway repetition loop in the generated PRD');
+  return out.join('\n');
+}
+
+// ── Section completeness ──────────────────────────────────────
+// The prompt template we send literally contains the canonical "## N. Title"
+// headings, so we extract the required set straight from it — always in sync
+// with the template, for every domain, with zero hardcoding.
+function expectedSectionHeadings(userPrompt) {
+  const re = /^##\s+(\d+)\.\s+(.+?)\s*$/gm;
+  const out = [];
+  let m;
+  while ((m = re.exec(userPrompt || '')) !== null) out.push({ num: parseInt(m[1], 10), title: m[2].trim() });
+  return out;
+}
+
+const _normHeading = (s) => (s || '').toLowerCase().replace(/^\d+\.\s*/, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+
+// Which required sections are absent from the doc, matched by TITLE (not number,
+// since a derailed generation often renumbers the wrong sections).
+function missingSections(md, expected) {
+  if (!expected || !expected.length) return [];
+  const headings = [...(md || '').matchAll(/^##\s+(.+?)\s*$/gm)].map(h => _normHeading(h[1]));
+  return expected.filter(e => {
+    const key = _normHeading(e.title);
+    return !headings.some(h => h && (h.includes(key) || key.includes(h)));
+  });
+}
+
+// Remove a trailing "## Glossary …" block and the "*End of PRD*" marker so newly
+// generated missing sections can be appended BEFORE them (order stays sane).
+function stripTrailingGlossaryAndEnd(md) {
+  let out = (md || '').replace(/\n?\*End of PRD[^\n]*\*\s*$/i, '');
+  out = out.replace(/\n##\s+Glossary[\s\S]*$/i, '');
+  return out.trimEnd();
+}
+
+// Renumber all top-level "## N. Title" content sections sequentially by order of
+// appearance (Glossary stays unnumbered). Applied ONCE to the finished document —
+// never to a partial section fix. Idempotent on an already-correct doc.
+function renumberSections(md) {
+  if (!md) return md;
+  let n = 0;
+  return md.replace(/^##[ \t]+(?:\d+\.\s*)?(.+?)[ \t]*$/gm, (line, title) => {
+    const t = title.trim();
+    if (/^glossary\b/i.test(t)) return `## ${t}`;
+    n++;
+    return `## ${n}. ${t}`;
+  });
+}
+
+// True when the doc ends mid-content (no proper End-of-PRD marker, or a "..." row
+// in the tail). Distinct from "missing sections" — this is about an abrupt cut-off.
+function endsAbruptly(md) {
+  if (!md || md.length < 400) return true;
+  if (!/\*End of PRD/i.test(md)) return true;
+  const tail = md.slice(-1500);
+  if (/\|\s*\.{2,}\s*\|/.test(tail)) return true;
+  return false;
+}
+
 // True when the PRD stopped before the required closing sections or left placeholder rows.
 function isPRDTruncated(md) {
   if (!md || md.length < 400) return true;
@@ -3487,8 +3601,18 @@ function isPRDTruncated(md) {
   return true;
 }
 
-// Generate the full PRD, auto-continuing when Groq hits the output token ceiling.
+// Generate the full PRD, auto-continuing until every required section is present.
+// Two continuation modes:
+//   • MISSING SECTIONS — the doc ended (has "End of PRD") but skipped required
+//     sections (classic after a degeneration loop derails the model). We ask for
+//     exactly those sections by name and slot them in before the Glossary.
+//   • MID-CONTENT CUT-OFF — the doc was chopped by the output-token ceiling. We
+//     continue from a cleaned tail.
+// Every chunk is run through collapseRunawayRepetition so a repetition loop can
+// never eat the budget or poison the tail we feed back in.
 async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
+  const expected = expectedSectionHeadings(userPrompt);
+  const endMarker = `*End of PRD — ${brief.projectName} v1.0*`;
   let totalTokens = 0;
   let model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
   const maxTok = budgetMaxTokens(model, systemPrompt, userPrompt, MAX_TOKENS);
@@ -3500,26 +3624,49 @@ async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
     model,
     chain: HEAVY_CHAIN
   });
-  let md = res.text || '';
+  let md = collapseRunawayRepetition(res.text || '');
   totalTokens += res.usage?.total_tokens || 0;
   model = res.model || model; // stick with whichever model actually served this call
 
   let contRound = 0;
-  const MAX_CONTINUATIONS = 4;
-  while ((res.finishReason === 'length' || isPRDTruncated(md)) && contRound < MAX_CONTINUATIONS) {
+  const MAX_CONTINUATIONS = 5;
+  while (contRound < MAX_CONTINUATIONS) {
+    const missing = missingSections(md, expected);
+    const cutOff = res.finishReason === 'length' || endsAbruptly(md);
+    if (!missing.length && !cutOff) break; // complete — every required section present, ends cleanly
+
     contRound++;
     if (onProgress) onProgress(contRound);
     await waitForGroqQuota(model);
-    const tail = md.slice(-4000);
-    const contSys =
-      'You are continuing a Product Requirements Document cut off mid-generation. ' +
-      'Output ONLY new markdown — do NOT repeat earlier sections. ' +
-      'If a table row was cut off, complete that row first. ' +
-      'Then finish ALL remaining sections through Glossary and *End of PRD — <name> v1.0*. ' +
-      'Every table row must be fully populated — NEVER use "..." as a placeholder.';
-    const contUser =
-      `Project: ${brief.projectName}\nStack: ${brief.backend} + ${brief.frontend}\n\n` +
-      `The document currently ends with:\n"""\n${tail}\n"""\n\nContinue from the exact cut-off point.`;
+
+    let contSys, contUser;
+    if (missing.length) {
+      // Slot the missing sections in BEFORE the Glossary/End marker.
+      md = stripTrailingGlossaryAndEnd(md);
+      const list = missing.map(s => `## ${s.num}. ${s.title}`).join('\n');
+      contSys =
+        'You are completing a partially-written Product Requirements Document that skipped required sections. ' +
+        'Output ONLY the requested missing sections as full Markdown, each starting with its exact "## " heading, in the order given. ' +
+        'Populate every table with real rows — NEVER use "..." placeholders. Do NOT repeat sections already written. ' +
+        'Do NOT expand IDE/build/VCS metadata folders (.idea/.vscode/node_modules/target/build/.git) in any file tree, and never list near-identical numbered filenames. ' +
+        `After the last section, output a "## Glossary" table, then the line "${endMarker}".`;
+      contUser =
+        `Project: ${brief.projectName}\nStack: ${brief.backend} + ${brief.frontend} + ${brief.database} + ${brief.auth}\n\n` +
+        `These REQUIRED sections are MISSING and must be written in full, in this order:\n${list}\n\n` +
+        `Write ONLY these sections, then the closing Glossary and End-of-PRD line.`;
+    } else {
+      const tail = md.slice(-3000);
+      contSys =
+        'You are continuing a Product Requirements Document cut off mid-generation. ' +
+        'Output ONLY new markdown — do NOT repeat earlier sections. If a table row was cut off, complete that row first. ' +
+        `Then finish ALL remaining sections through the Glossary and "${endMarker}". ` +
+        'Every table row must be fully populated — NEVER use "..." as a placeholder. ' +
+        'Do NOT expand IDE/build/VCS metadata folders in any file tree.';
+      contUser =
+        `Project: ${brief.projectName}\nStack: ${brief.backend} + ${brief.frontend}\n\n` +
+        `The document currently ends with:\n"""\n${tail}\n"""\n\nContinue from the exact cut-off point.`;
+    }
+
     const contMax = budgetMaxTokens(model, contSys, contUser, 5500);
     res = await callGroq({
       systemPrompt: contSys,
@@ -3530,13 +3677,23 @@ async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
       chain: HEAVY_CHAIN
     });
     model = res.model || model;
-    const chunk = (res.text || '').trim();
+    const chunk = collapseRunawayRepetition((res.text || '').trim());
     if (!chunk) break;
     md = md.trimEnd() + '\n\n' + chunk;
     totalTokens += res.usage?.total_tokens || 0;
   }
 
-  return { text: md, usage: { total_tokens: totalTokens }, truncated: isPRDTruncated(md), model };
+  const stillMissing = missingSections(md, expected);
+  return {
+    text: md,
+    usage: { total_tokens: totalTokens },
+    // Only a genuine mid-content cut-off is "truncated" (that path retries). A doc
+    // that ends cleanly but is still missing a section renders as-is — far better
+    // than discarding a near-complete PRD — with the gap surfaced via missingSections.
+    truncated: isPRDTruncated(md),
+    missingSections: stillMissing.map(s => s.title),
+    model
+  };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4747,6 +4904,7 @@ OUTPUT RULES:
 - Output ONLY valid Markdown. No preamble, no closing remarks outside the document.
 - Every table must have real populated rows — no [example here].
 - Zero placeholders in tables, config values, or deployment commands. NEVER use "..." or "[TBD]" in table cells — every row must be complete.
+- FOLDER TREES: show ONLY source files and folders a developer actually authors. NEVER expand generated, IDE, build, dependency, or VCS metadata directories — .idea/, .vscode/, .git/, node_modules/, target/, build/, dist/, .gradle/, .mvn/, __pycache__/, venv/, coverage/. Show each of those (if shown at all) as a SINGLE collapsed line, e.g. "├── .idea/    ← IDE config (git-ignored)". Do NOT list files like Project_Default.xml, workspace.xml, or numbered variants. Keep every tree under ~40 lines total. NEVER repeat near-identical filenames (e.g. file_1, file_2, file_3…) — that is a generation error; list at most 2 examples then stop.
 - Prefer free or low-cost tiers wherever the project reasonably allows.
 - COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
 - ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
@@ -4777,7 +4935,7 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     setProgress(90, `⏳ Clearing token window for ${modelName(stage2.model)} cross-check…`, '');
     await waitForGroqQuota(stage2.model);
     const verify = await verifyAndFixPRD(brief, rawMarkdown);
-    rawMarkdown = verify.markdown;
+    rawMarkdown = renumberSections(verify.markdown); // sequential 1..N headings after all sections settle
     _lastVerify = verify;
 
     const totalTokens = (stage2.usage?.total_tokens || 0) + (verify.tokens || 0);
@@ -5061,7 +5219,8 @@ function fixSqlTableOrder(md) {
 // is rate-limited or skipped.
 function postProcessPRD(brief, md) {
   if (!md) return md;
-  let out = applyLocalFixes(brief, md);
+  let out = collapseRunawayRepetition(md); // kill any repetition loop before anything else reads it
+  out = applyLocalFixes(brief, out);
   out = fixSqlTableOrder(out);
   out = dedupePRDContent(out);
   const isNext = /next\.js|nextjs|\bnext\b/i.test((brief && brief.frontend) || '');

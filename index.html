@@ -4139,7 +4139,12 @@ function localPRDAudit(brief, md) {
       php:    { active: isPhp,    sigs: ['eloquent','artisan','composer.json','composer require','blade template','laravel mix','phpunit','psr-4'] },
       ruby:   { active: isRuby,   sigs: ['activerecord','active record','gemfile','bundle install','rails console','rake','rspec','sidekiq worker','puma','erb template'] },
       dotnet: { active: isDotnet, sigs: ['entity framework','dbcontext','.csproj','nuget','linq','asp.net core','iis','razor pages','xunit','dependency injection container'] },
-      node:   { active: isNode,   sigs: ['mongoose','sequelize','express.js','express middleware','app.use(','npm run','nest module','typeorm entity','prisma client','jest','nodemon','pm2'] }
+      // NOTE: 'jest' and 'npm run' are deliberately EXCLUDED — every web app has a
+      // JavaScript frontend (React/Vue/etc.) that legitimately uses Jest for testing
+      // and npm scripts, regardless of backend. Flagging them fired false-positive
+      // "backend contamination" issues on every non-Node stack (Django, Spring, Rails…)
+      // that could never be fixed. Only keep signatures unique to a Node BACKEND.
+      node:   { active: isNode,   sigs: ['mongoose','sequelize','express.js','express middleware','app.use(','nest module','typeorm entity','prisma client','nodemon','pm2'] }
     };
     const flat = [];
     Object.values(ECOSYSTEMS).forEach(eco => { if (!eco.active) flat.push(...eco.sigs); });
@@ -4502,7 +4507,7 @@ async function fixSection(brief, sectionText, issues) {
 
 // One 70B call to fix the entire PRD when it fits in the token budget (best quality).
 async function fixWholePRD(brief, md, issues) {
-  const capped = issues.slice(0, 15);
+  const capped = issues.slice(0, 24); // matches repairWithHighModel's one-shot gate — list every issue, not just 15
   const sys = 'You are an expert PRD editor. Fix every listed issue precisely. Output ONLY the corrected full PRD in Markdown — same structure, no commentary, no duplicate sections.';
   const user = buildFixPrompt(brief, md, capped);
   const model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
@@ -4620,8 +4625,12 @@ async function repairWithHighModel(brief, md, critical, parts, bucket) {
   let tokens = 0;
   const entries = [...bucket.entries()];
 
-  // Best path: one-shot full-document repair on 70B
-  if (md.length < 32000 && critical.length <= 15) {
+  // Best path: one-shot full-document repair (fixes ALL issues in a single call,
+  // regardless of how many sections they span — this is what stops issues in the
+  // 5th+ section being left behind by the 4-section batch fallback). The cap is
+  // generous because it's still one call on the same doc; the HEAVY_CHAIN fallback
+  // models (Scout 30K TPM, etc.) absorb the larger request comfortably.
+  if (md.length < 42000 && critical.length <= 24) {
     try {
       const whole = await fixWholePRD(brief, md, critical);
       if (whole) {

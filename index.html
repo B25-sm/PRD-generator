@@ -1745,16 +1745,75 @@ footer a:hover { color: var(--accent2); }
 //  CONFIG
 // ═══════════════════════════════════════════════════════════
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL        = 'llama-3.3-70b-versatile';
-// Fast model — separate Groq bucket; Stage 1 brief expansion only.
-const FAST_MODEL   = 'llama-3.1-8b-instant';
-// Cross-check audit + repairs always use the high model for maximum accuracy.
-const VERIFY_MODEL = MODEL;
-const MAX_TOKENS   = 8192;
 
 // ═══════════════════════════════════════════════════════════
-//  GROQ FREE TIER LIMITS (official)
-//  llama-3.3-70b-versatile: 30 req/min · 14,400 req/day · 6,000 tokens/min
+//  MODEL FALLBACK CHAINS — each Groq model has its OWN separate
+//  daily/per-minute quota (limits apply per model, not pooled), so when the
+//  primary model in a chain hits its daily cap we transparently move to the
+//  next one instead of blocking the user until midnight UTC. HEAVY_CHAIN
+//  backs generation + verification (needs strong instruction-following);
+//  FAST_CHAIN backs the cheap Stage 1 brief expansion.
+// ═══════════════════════════════════════════════════════════
+const HEAVY_CHAIN = [
+  'llama-3.3-70b-versatile',                    // 12K TPM / 100K TPD — best known quality, tried first
+  'meta-llama/llama-4-scout-17b-16e-instruct',   // 30K TPM / 500K TPD
+  'openai/gpt-oss-120b',                         // 8K TPM / 200K TPD
+  'qwen/qwen3-32b'                               // 6K TPM / 500K TPD
+];
+const FAST_CHAIN = [
+  'llama-3.1-8b-instant',  // 6K TPM / 500K TPD — Stage 1 brief expansion
+  'openai/gpt-oss-20b'     // 8K TPM / 200K TPD
+];
+// Per-request token ceiling (input + max_tokens) for each model — Groq's TPM cap.
+const MODEL_LIMITS = {
+  'llama-3.3-70b-versatile':                   { tpm: 12000, tpd: 100000 },
+  'meta-llama/llama-4-scout-17b-16e-instruct': { tpm: 30000, tpd: 500000 },
+  'openai/gpt-oss-120b':                       { tpm: 8000,  tpd: 200000 },
+  'qwen/qwen3-32b':                            { tpm: 6000,  tpd: 500000 },
+  'llama-3.1-8b-instant':                      { tpm: 6000,  tpd: 500000 },
+  'openai/gpt-oss-20b':                        { tpm: 8000,  tpd: 200000 }
+};
+const MODEL_DISPLAY_NAMES = {
+  'llama-3.3-70b-versatile': 'Llama 3.3 70B',
+  'meta-llama/llama-4-scout-17b-16e-instruct': 'Llama 4 Scout',
+  'openai/gpt-oss-120b': 'GPT-OSS 120B',
+  'qwen/qwen3-32b': 'Qwen3 32B',
+  'llama-3.1-8b-instant': 'Llama 3.1 8B',
+  'openai/gpt-oss-20b': 'GPT-OSS 20B'
+};
+function modelName(model) { return MODEL_DISPLAY_NAMES[model] || model; }
+
+const STORAGE_KEY_MODEL_EXHAUSTED = 'prd_model_exhausted'; // { modelId: 'YYYY-MM-DD' (UTC) }
+function todayUTC() { return new Date().toISOString().slice(0, 10); }
+function getExhaustedModels() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY_MODEL_EXHAUSTED) || '{}'); } catch (_) { return {}; }
+}
+function isModelExhaustedToday(model) {
+  return getExhaustedModels()[model] === todayUTC();
+}
+function markModelExhausted(model) {
+  const map = getExhaustedModels();
+  map[model] = todayUTC();
+  localStorage.setItem(STORAGE_KEY_MODEL_EXHAUSTED, JSON.stringify(map));
+}
+// A fresh API key likely means a fresh org quota — give every model another chance.
+function clearExhaustedModels() {
+  localStorage.removeItem(STORAGE_KEY_MODEL_EXHAUSTED);
+}
+// First model in the chain that hasn't hit its daily cap today, or null if all have.
+function pickModel(chain) {
+  return chain.find(m => !isModelExhaustedToday(m)) || null;
+}
+
+const MAX_TOKENS = 8192; // desired output size for the primary model; clamped per-model by budgetMaxTokens
+
+// ═══════════════════════════════════════════════════════════
+//  GROQ FREE TIER LIMITS — soft client-side pacing, approximated against the
+//  PRIMARY heavy model (llama-3.3-70b-versatile, tried first in HEAVY_CHAIN).
+//  Real per-request enforcement (413/429) reads the actual model's numbers
+//  from Groq's response regardless of these approximations. Once the primary
+//  model's daily cap is hit, callGroq() falls back to the next model in
+//  HEAVY_CHAIN/FAST_CHAIN (see MODEL_LIMITS above) instead of stopping here.
 // ═══════════════════════════════════════════════════════════
 const GROQ_LIMITS = {
   // Per-request token budget
@@ -1867,6 +1926,7 @@ function saveApiKey() {
   }
   apiKey = val;
   localStorage.setItem(STORAGE_KEY_API, val);
+  clearExhaustedModels(); // a new key likely has fresh quota on every model
   updateKeySection();
   refreshRateBadge();
   const btn = document.querySelector('#api-key-section .btn-save');
@@ -3191,10 +3251,13 @@ function estimateTokens(str) {
   return Math.ceil((str || '').length / 4);
 }
 
-// Largest max_tokens we can request so that (input + max_tokens) stays under the TPM limit.
-function budgetMaxTokens(systemPrompt, userPrompt, desiredMax) {
+// Largest max_tokens we can request so that (input + max_tokens) stays under the
+// given model's TPM limit. `model` may be omitted to fall back to the primary
+// heavy model's limit (kept for any legacy call sites).
+function budgetMaxTokens(model, systemPrompt, userPrompt, desiredMax) {
+  const tpm = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimit;
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
-  const room = GROQ_LIMITS.tpmLimit - inputTokens - GROQ_LIMITS.tpmSafetyMargin;
+  const room = tpm - inputTokens - GROQ_LIMITS.tpmSafetyMargin;
   return Math.max(GROQ_LIMITS.minCompletionTokens, Math.min(desiredMax, room));
 }
 
@@ -3242,12 +3305,32 @@ async function waitForGroqQuota() {
   // rolling 60s window. The reactive 429 handler covers any rare residual case.
 }
 
-async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3, model = MODEL }, retryCount = 0, tpmResetCycle = 0) {
-  // Pause ONLY if the rolling minute is already near-full from previous 70B calls
-  // (generate → audit → fix). A fresh window proceeds immediately. Small calls
+// When a model's daily cap is confirmed hit, mark it exhausted and hand back a
+// promise that retries the SAME request on the next available model in its chain
+// (max_tokens recomputed for that model's TPM room) — or throw once the whole
+// chain is exhausted. This is what lets a single free-tier daily cap turn into an
+// automatic model switch instead of a hard stop until midnight UTC.
+function fallbackOrThrow({ chain, model, systemPrompt, userPrompt, maxTokens, temperature }, serverWaitSec) {
+  markModelExhausted(model);
+  const next = pickModel(chain);
+  if (next) {
+    setProgress(null, `🔁 ${modelName(model)} hit today's free-tier limit — switching to ${modelName(next)}…`, '');
+    _rateLimitSession.streakWaitSec = 0;
+    _rateLimitSession.streakPauses = 0;
+    const newMaxTokens = budgetMaxTokens(next, systemPrompt, userPrompt, maxTokens);
+    return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature, model: next, chain }, 0, 0);
+  }
+  throw groqDailyCapError(serverWaitSec, chain);
+}
+
+async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperature = 0.3, model, chain = HEAVY_CHAIN }, retryCount = 0, tpmResetCycle = 0) {
+  if (!model) model = pickModel(chain) || chain[0];
+  const isHeavyTier = chain === HEAVY_CHAIN;
+  // Pause ONLY if the rolling minute is already near-full from previous heavy-tier
+  // calls (generate → audit → fix). A fresh window proceeds immediately. Small calls
   // like Stage 1 "understand your idea" (≤1200 tokens) skip this so the review
   // panel appears promptly — the reactive 429 handler still covers them.
-  if (model === MODEL && maxTokens > 1200) {
+  if (isHeavyTier && maxTokens > 1200) {
     await waitForGroqQuota();
   }
 
@@ -3282,30 +3365,32 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const MAX_AUTO_WAIT_SEC  = 15 * 60; // wait out a single pause up to 15 min (animated)
     const MAX_TOTAL_AUTO_SEC = 18 * 60; // ultimate cumulative backstop across pauses
 
-    // Truly long (hours-scale) → real daily cap with a known reset time → stop clearly.
+    // Truly long (hours-scale) → real daily cap with a known reset time → try the
+    // next model in the chain before giving up entirely.
     if (serverWaitSec && serverWaitSec > MAX_AUTO_WAIT_SEC) {
-      throw groqDailyCapError(serverWaitSec);
+      return fallbackOrThrow({ chain, model, systemPrompt, userPrompt, maxTokens, temperature }, serverWaitSec);
     }
 
     // Early daily-cap detection: a per-minute (TPM) limit ALWAYS clears within one 60s
     // window, so once we've spent a full window of dedicated back-to-back waiting with
     // zero successful calls in between, waiting can't be the cure — it's the daily cap.
-    // Bail in ~90s with a helpful message instead of grinding to the 18-min backstop.
+    // Switch models (or bail in ~90s with a helpful message once the chain is exhausted)
+    // instead of grinding to the 18-min backstop.
     if ((_rateLimitSession.streakWaitSec || 0) >= EARLY_DAILY_CAP_WAIT_SEC ||
         (_rateLimitSession.streakPauses  || 0) >= EARLY_DAILY_CAP_PAUSES) {
-      throw groqDailyCapError();
+      return fallbackOrThrow({ chain, model, systemPrompt, userPrompt, maxTokens, temperature });
     }
 
     // Ultimate cumulative backstop so it can never truly run "forever".
     if ((_rateLimitSession.elapsedSec || 0) >= MAX_TOTAL_AUTO_SEC) {
-      throw groqDailyCapError();
+      return fallbackOrThrow({ chain, model, systemPrompt, userPrompt, maxTokens, temperature });
     }
 
     // Wait the server's stated time (animated), else a capped exponential fallback.
     const fallbackSec = Math.ceil(Math.min(GROQ_LIMITS.baseRetryDelayMs * Math.pow(2, retryCount), GROQ_LIMITS.maxBackoffMs) / 1000);
     const waitSec = (serverWaitSec && serverWaitSec > 0) ? Math.min(serverWaitSec, MAX_AUTO_WAIT_SEC) : fallbackSec;
     const longWait = waitSec > 75; // a known, longer refill → show the calm full-timer animation
-    if (model === MODEL) _rateLimitSession.heavyPaused = true;
+    if (isHeavyTier) _rateLimitSession.heavyPaused = true;
     else _rateLimitSession.fastPaused = true;
 
     // Count this pause toward the consecutive-streak heuristic BEFORE rendering so the
@@ -3328,7 +3413,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
       mode: longWait ? 'reset-wait' : 'retry'
     });
     _rateLimitSession.streakWaitSec = (_rateLimitSession.streakWaitSec || 0) + waitSec;
-    return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model }, retryCount + 1, tpmResetCycle);
+    return callGroq({ systemPrompt, userPrompt, maxTokens, temperature, model, chain }, retryCount + 1, tpmResetCycle);
   }
 
   // ── 413: request too large for TPM → shrink max_tokens to fit and retry ──
@@ -3340,15 +3425,16 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     const reqMatch   = msg.match(/Requested\s+~?(\d+)/i);
 
     if (retryCount < GROQ_LIMITS.maxRetries) {
-      const limit       = limitMatch ? parseInt(limitMatch[1], 10) : GROQ_LIMITS.tpmLimit;
-      const requested   = reqMatch ? parseInt(reqMatch[1], 10) : (maxTokens + estimateTokens(systemPrompt) + estimateTokens(userPrompt));
-      const inputTokens = Math.max(0, requested - maxTokens);
+      const modelTpm     = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimit;
+      const limit        = limitMatch ? parseInt(limitMatch[1], 10) : modelTpm;
+      const requested    = reqMatch ? parseInt(reqMatch[1], 10) : (maxTokens + estimateTokens(systemPrompt) + estimateTokens(userPrompt));
+      const inputTokens  = Math.max(0, requested - maxTokens);
       const newMaxTokens = Math.max(GROQ_LIMITS.minCompletionTokens, limit - inputTokens - GROQ_LIMITS.tpmSafetyMargin);
 
       if (newMaxTokens < maxTokens) {
         setProgress(null, '⏳ Trimming response size to fit Groq\'s per-minute limit — retrying…', '');
         await new Promise(r => setTimeout(r, 400));
-        return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature, model }, retryCount + 1, tpmResetCycle);
+        return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature, model, chain }, retryCount + 1, tpmResetCycle);
       }
     }
     throw new Error('Your tech-stack details pushed the request over Groq\'s per-minute token limit. Try shortening the "Other Tools" field (or wait ~1 minute and retry).');
@@ -3372,7 +3458,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   const text = choice.message?.content || '';
   const finishReason = choice.finish_reason || 'stop';
   if (data.usage?.total_tokens) logGroqTokens(data.usage.total_tokens);
-  return { text, usage: data.usage, finishReason };
+  return { text, usage: data.usage, finishReason, model };
 }
 
 // True when the PRD stopped before the required closing sections or left placeholder rows.
@@ -3391,15 +3477,19 @@ function isPRDTruncated(md) {
 // Generate the full PRD, auto-continuing when Groq hits the output token ceiling.
 async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
   let totalTokens = 0;
-  const maxTok = budgetMaxTokens(systemPrompt, userPrompt, MAX_TOKENS);
+  let model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  const maxTok = budgetMaxTokens(model, systemPrompt, userPrompt, MAX_TOKENS);
   let res = await callGroq({
     systemPrompt,
     userPrompt,
     maxTokens: maxTok,
-    temperature: 0.35
+    temperature: 0.35,
+    model,
+    chain: HEAVY_CHAIN
   });
   let md = res.text || '';
   totalTokens += res.usage?.total_tokens || 0;
+  model = res.model || model; // stick with whichever model actually served this call
 
   let contRound = 0;
   const MAX_CONTINUATIONS = 4;
@@ -3417,20 +3507,23 @@ async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
     const contUser =
       `Project: ${brief.projectName}\nStack: ${brief.backend} + ${brief.frontend}\n\n` +
       `The document currently ends with:\n"""\n${tail}\n"""\n\nContinue from the exact cut-off point.`;
-    const contMax = budgetMaxTokens(contSys, contUser, 5500);
+    const contMax = budgetMaxTokens(model, contSys, contUser, 5500);
     res = await callGroq({
       systemPrompt: contSys,
       userPrompt: contUser,
       maxTokens: contMax,
-      temperature: 0.3
+      temperature: 0.3,
+      model,
+      chain: HEAVY_CHAIN
     });
+    model = res.model || model;
     const chunk = (res.text || '').trim();
     if (!chunk) break;
     md = md.trimEnd() + '\n\n' + chunk;
     totalTokens += res.usage?.total_tokens || 0;
   }
 
-  return { text: md, usage: { total_tokens: totalTokens }, truncated: isPRDTruncated(md) };
+  return { text: md, usage: { total_tokens: totalTokens }, truncated: isPRDTruncated(md), model };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3783,7 +3876,7 @@ async function generatePRD() {
       userPrompt: buildExpandPrompt(idea),
       maxTokens: 900,
       temperature: 0.25,
-      model: FAST_MODEL  // fast bucket — keeps Stage 1 off the 70B quota
+      chain: FAST_CHAIN  // fast bucket — keeps Stage 1 off the heavy-tier quota
     });
 
     document.getElementById('progress-area').style.display = 'none';
@@ -4223,12 +4316,14 @@ Output ONLY the corrected section Markdown, starting with its "## " heading. No 
 async function fixSection(brief, sectionText, issues) {
   const sys = 'You are a precise PRD editor. You correct only the given section and output only that section in Markdown.';
   const user = buildSectionFixPrompt(brief, sectionText, issues);
+  const model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
   const res = await callGroq({
     systemPrompt: sys,
     userPrompt: user,
-    maxTokens: budgetMaxTokens(sys, user, 2800),
+    maxTokens: budgetMaxTokens(model, sys, user, 2800),
     temperature: 0.1,
-    model: VERIFY_MODEL
+    model,
+    chain: HEAVY_CHAIN
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
@@ -4240,8 +4335,10 @@ async function fixWholePRD(brief, md, issues) {
   const capped = issues.slice(0, 15);
   const sys = 'You are an expert PRD editor. Fix every listed issue precisely. Output ONLY the corrected full PRD in Markdown — same structure, no commentary, no duplicate sections.';
   const user = buildFixPrompt(brief, md, capped);
-  const maxTok = budgetMaxTokens(sys, user, 6000);
-  if (estimateTokens(sys) + estimateTokens(user) + maxTok > GROQ_LIMITS.tpmLimit - GROQ_LIMITS.tpmSafetyMargin) {
+  const model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  const modelTpm = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimit;
+  const maxTok = budgetMaxTokens(model, sys, user, 6000);
+  if (estimateTokens(sys) + estimateTokens(user) + maxTok > modelTpm - GROQ_LIMITS.tpmSafetyMargin) {
     return null;
   }
   const res = await callGroq({
@@ -4249,7 +4346,8 @@ async function fixWholePRD(brief, md, issues) {
     userPrompt: user,
     maxTokens: maxTok,
     temperature: 0.1,
-    model: VERIFY_MODEL
+    model,
+    chain: HEAVY_CHAIN
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```markdown\n?/i, '').replace(/^```\n?/i, '').replace(/```\s*$/,'').trim();
@@ -4279,12 +4377,14 @@ Output ONLY the corrected section Markdown blocks in the same order.`;
 async function fixSectionsBatch(brief, parts, entries) {
   const sys = 'You are an expert PRD editor. Return only corrected Markdown sections, each starting with ## heading.';
   const user = buildBatchSectionFixPrompt(brief, parts, entries);
+  const model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
   const res = await callGroq({
     systemPrompt: sys,
     userPrompt: user,
-    maxTokens: budgetMaxTokens(sys, user, 4500),
+    maxTokens: budgetMaxTokens(model, sys, user, 4500),
     temperature: 0.1,
-    model: VERIFY_MODEL
+    model,
+    chain: HEAVY_CHAIN
   });
   let out = (res.text || '').trim();
   if (/^```/.test(out)) out = out.replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/,'').trim();
@@ -4307,12 +4407,14 @@ async function fixSectionsBatch(brief, parts, entries) {
 async function runSemanticAudit(brief, md) {
   const auditSys = 'You are a strict, precise QA auditor. Output only valid raw JSON. Never fabricate issues.';
   const auditUser = buildAuditPrompt(brief, md);
+  const model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
   const audit = await callGroq({
     systemPrompt: auditSys,
     userPrompt: auditUser,
-    maxTokens: budgetMaxTokens(auditSys, auditUser, 2000),
+    maxTokens: budgetMaxTokens(model, auditSys, auditUser, 2000),
     temperature: 0.0,
-    model: VERIFY_MODEL
+    model,
+    chain: HEAVY_CHAIN
   });
   return { parsed: parseAuditJSON(audit.text), tokens: audit.usage?.total_tokens || 0 };
 }
@@ -4388,11 +4490,12 @@ async function repairWithHighModel(brief, md, critical, parts, bucket) {
   };
 }
 
-// Stage 3 — high-quality cross-check on VERIFY_MODEL (70B).
-// Flow: local fixes → local audit → 70B semantic audit → 70B repair (whole-doc,
+// Stage 3 — high-quality cross-check on HEAVY_CHAIN (70B, falling back to other
+// free heavy models once the daily cap on one is hit).
+// Flow: local fixes → local audit → semantic audit → repair (whole-doc,
 // batch, or section fallback) → zero-token local re-check. Kept to a single round
-// on purpose: each 70B pass re-feeds the whole ~8k-token doc, and on Groq's free
-// tier (12k TPM) extra rounds are what turn a run into a 20–30 min quota-wait grind.
+// on purpose: each pass re-feeds the whole ~8k-token doc, and extra rounds are
+// what turn a run into a long quota-wait grind on any one model's TPM.
 // One audit + one repair catches the critical issues without exhausting the minute.
 async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
@@ -4708,13 +4811,13 @@ function resetRateLimitSession() {
 
 // Unified "free-tier cap reached" message. Pass serverWaitSec when Groq gave a real
 // (hours-scale) reset time; omit it for the inferred "waiting isn't helping" case.
-function groqDailyCapError(serverWaitSec) {
+function groqDailyCapError(serverWaitSec, chain = HEAVY_CHAIN) {
   const resetHint = (serverWaitSec && serverWaitSec > 0)
     ? ` It looks like it resets in ~${formatWaitTime(serverWaitSec)}.`
     : ' Daily caps reset at midnight UTC.';
   return new Error(
-    "Groq's free-tier limit is blocking further generation and waiting isn't clearing it — " +
-    'that almost always means the daily token/request cap has been reached.' + resetHint + ' ' +
+    `Every free-tier model we can fall back to (${chain.map(modelName).join(', ')}) has hit its daily limit — ` +
+    'waiting isn\'t clearing it.' + resetHint + ' ' +
     'Add a different Groq API key via the key button in the header to continue now, or try again later. ' +
     'Your idea and tech stack are saved — nothing is lost.'
   );

@@ -4908,7 +4908,17 @@ async function verifyAndFixPRD(brief, md) {
   let tokens = 0;
   let appliedFixes = 0;
   let aiAuditRan = false;
-  const MAX_ROUNDS = 1;
+
+  // Adaptive correction depth. The primary 70B has a tight 100k-tokens/day budget,
+  // so it gets a single audit+repair (extra rounds there caused the old quota grinds).
+  // The fallback models (Scout/Qwen/GPT-OSS: 200k–500k TPD) have the headroom for a
+  // SECOND round — and they need it, since they make more mistakes than the 70B. This
+  // is how we lift weaker-model output: spend their larger budget on more correction.
+  // The 2nd round is a ceiling, not a guarantee — the loop exits early the moment a
+  // round leaves zero critical issues, so a clean draft never pays for it.
+  const verifyModel = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  const verifyTpd = (MODEL_LIMITS[verifyModel] && MODEL_LIMITS[verifyModel].tpd) || 100000;
+  const MAX_ROUNDS = verifyTpd >= 200000 ? 2 : 1;
 
   md = applyLocalFixes(brief, md);
 
@@ -4920,8 +4930,8 @@ async function verifyAndFixPRD(brief, md) {
       setProgress(
         round === 1 ? 92 : (round === 2 ? 95 : 97),
         round === 1
-          ? '🔎 Cross-checking with 70B model against your inputs…'
-          : `🔎 Re-auditing with 70B (pass ${round}/${MAX_ROUNDS})…`,
+          ? `🔎 Cross-checking with ${modelName(verifyModel)} against your inputs…`
+          : `🔎 Re-auditing with ${modelName(verifyModel)} (pass ${round}/${MAX_ROUNDS})…`,
         ''
       );
       const { parsed, tokens: auditTok } = await runSemanticAudit(brief, md);
@@ -4956,7 +4966,7 @@ async function verifyAndFixPRD(brief, md) {
     // (below) decides the final 'corrected' vs 'partial' status without spending
     // another full 70B pass on re-auditing.
 
-    setProgress(96, `🛠 70B repair — fixing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
+    setProgress(96, `🛠 ${modelName(verifyModel)} repair — fixing ${critical.length} issue${critical.length > 1 ? 's' : ''}…`, '');
     const parts = splitPRDSections(md);
     const bucket = new Map();
     critical.forEach(issue => {

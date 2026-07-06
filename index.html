@@ -2001,10 +2001,10 @@ function saveTokenLog(log) {
   localStorage.setItem(STORAGE_KEY_TOKENS, JSON.stringify(log));
 }
 
-function logGroqTokens(tokensUsed) {
+function logGroqTokens(tokensUsed, model) {
   const now = Date.now();
   let tokenLog = getTokenLog().filter(e => now - e.ts < 60 * 1000);
-  tokenLog.push({ ts: now, tokens: tokensUsed || 0 });
+  tokenLog.push({ ts: now, tokens: tokensUsed || 0, model });
   saveTokenLog(tokenLog);
 }
 
@@ -2019,10 +2019,15 @@ function recordRequest(tokensUsed = 0) {
   void tokensUsed;
 }
 
-function getTokensUsedLastMinute() {
+// Groq enforces TPM per model, not pooled across models — so this must be scoped
+// to ONE model's own calls, or a fallback model with a much bigger TPM would look
+// (and get throttled) like it's sharing the primary model's smaller window.
+// Pass no model to get the old cross-model total (used only for display purposes
+// that aren't tied to a single ceiling).
+function getTokensUsedLastMinute(model) {
   const now = Date.now();
   return getTokenLog()
-    .filter(e => now - e.ts < 60 * 1000)
+    .filter(e => now - e.ts < 60 * 1000 && (!model || e.model === model))
     .reduce((sum, e) => sum + e.tokens, 0);
 }
 
@@ -2065,17 +2070,21 @@ function checkRateLimit() {
     };
   }
 
-  // Layer 5: Token budget check — single source of truth is GROQ_LIMITS.tpmLimitPerMin
-  // (the same per-minute ceiling the 413/proactive logic uses), not a stale hardcode.
-  const tpmPerMin = GROQ_LIMITS.tpmLimitPerMin;
-  const tokensLastMin = getTokensUsedLastMinute();
+  // Layer 5: Token budget check — scoped to whichever model will actually serve
+  // the next call (each Groq model has its own separate TPM bucket), not a
+  // hardcode tied to the primary heavy model.
+  const activeModel = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  const tpmPerMin = (MODEL_LIMITS[activeModel] && MODEL_LIMITS[activeModel].tpm) || GROQ_LIMITS.tpmLimitPerMin;
+  const tokensLastMin = getTokensUsedLastMinute(activeModel);
   const tokenHeadroom = tpmPerMin - tokensLastMin;
   // Stage 1 + Stage 2 combined need ~3,200 input tokens minimum before we begin.
   if (tokenHeadroom < 3200) {
-    const waitSec = 60 - Math.floor((now - Math.min(...getTokenLog().map(e => e.ts))) / 1000);
+    const modelLog = getTokenLog().filter(e => e.model === activeModel && now - e.ts < 60 * 1000);
+    const oldestTs = modelLog.length ? Math.min(...modelLog.map(e => e.ts)) : now;
+    const waitSec = 60 - Math.floor((now - oldestTs) / 1000);
     return {
       blocked: true, layer: 'tokens',
-      reason: `Token quota almost full (${tokensLastMin.toLocaleString()}/${tpmPerMin.toLocaleString()} used this minute). Wait ~${Math.max(waitSec, 5)}s.`,
+      reason: `${modelName(activeModel)} token quota almost full (${tokensLastMin.toLocaleString()}/${tpmPerMin.toLocaleString()} used this minute). Wait ~${Math.max(waitSec, 5)}s.`,
       waitSec: Math.max(waitSec, 5)
     };
   }
@@ -3269,17 +3278,21 @@ function budgetMaxTokens(model, systemPrompt, userPrompt, desiredMax) {
 // prior calls. We never block a fresh request based on its own size — Groq judges
 // that at call time (and the 429/413 handlers cover real over-limit cases). This
 // is what prevents needless waits when no tokens have been used yet.
-async function waitForGroqQuota() {
-  const limit = GROQ_LIMITS.tpmLimitPerMin;
+// `model` scopes the check to THAT model's own TPM bucket and its own token log —
+// each Groq model has a separate quota, so a fallback model's usage must never be
+// judged against a different model's limit (or vice versa).
+async function waitForGroqQuota(model) {
+  if (!model) model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  const limit = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimitPerMin;
   const safety = GROQ_LIMITS.tpmSafetyMarginTokens;
 
-  const used = getTokensUsedLastMinute();
+  const used = getTokensUsedLastMinute(model);
   if (used + safety < limit) return; // room → go immediately
 
   // Compute ONE wait that frees enough tokens, so we show a single continuous
   // countdown instead of restarting the timer every few seconds.
   const now = Date.now();
-  const log = getTokenLog().filter(e => now - e.ts < 60 * 1000).sort((a, b) => a.ts - b.ts);
+  const log = getTokenLog().filter(e => e.model === model && now - e.ts < 60 * 1000).sort((a, b) => a.ts - b.ts);
   const needToFree = (used + safety) - limit;
   let freed = 0;
   let clearAt = now + 60_000; // worst case: a full window
@@ -3292,7 +3305,7 @@ async function waitForGroqQuota() {
 
   setProgress(
     null,
-    `⏳ Token quota ${used.toLocaleString()}/${limit.toLocaleString()}/min — refilling, then continuing…`,
+    `⏳ ${modelName(model)} token quota ${used.toLocaleString()}/${limit.toLocaleString()}/min — refilling, then continuing…`,
     undefined
   );
   await waitWithCountdown(waitSec, {
@@ -3331,7 +3344,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   // like Stage 1 "understand your idea" (≤1200 tokens) skip this so the review
   // panel appears promptly — the reactive 429 handler still covers them.
   if (isHeavyTier && maxTokens > 1200) {
-    await waitForGroqQuota();
+    await waitForGroqQuota(model);
   }
 
   const response = await fetch(GROQ_API_URL, {
@@ -3457,7 +3470,7 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   const choice = data.choices?.[0] || {};
   const text = choice.message?.content || '';
   const finishReason = choice.finish_reason || 'stop';
-  if (data.usage?.total_tokens) logGroqTokens(data.usage.total_tokens);
+  if (data.usage?.total_tokens) logGroqTokens(data.usage.total_tokens, model);
   return { text, usage: data.usage, finishReason, model };
 }
 
@@ -3496,7 +3509,7 @@ async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
   while ((res.finishReason === 'length' || isPRDTruncated(md)) && contRound < MAX_CONTINUATIONS) {
     contRound++;
     if (onProgress) onProgress(contRound);
-    await waitForGroqQuota();
+    await waitForGroqQuota(model);
     const tail = md.slice(-4000);
     const contSys =
       'You are continuing a Product Requirements Document cut off mid-generation. ' +
@@ -4760,9 +4773,9 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     rawMarkdown = postProcessPRD(brief, stage2.text);
     if (!rawMarkdown) throw new Error('Groq returned an empty response. Please try again.');
 
-    // ── STAGE 3: 70B cross-check — wait for quota window, then audit + repair on high model ──
-    setProgress(90, '⏳ Clearing token window for 70B cross-check…', '');
-    await waitForGroqQuota();
+    // ── STAGE 3: cross-check — wait for quota window, then audit + repair on a heavy model ──
+    setProgress(90, `⏳ Clearing token window for ${modelName(stage2.model)} cross-check…`, '');
+    await waitForGroqQuota(stage2.model);
     const verify = await verifyAndFixPRD(brief, rawMarkdown);
     rawMarkdown = verify.markdown;
     _lastVerify = verify;

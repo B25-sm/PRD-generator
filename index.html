@@ -4358,57 +4358,63 @@ function localPRDAudit(brief, md) {
     if (/review|rating/.test(featAll) && /CREATE TABLE/i.test(text) && !/CREATE TABLE\s+(reviews|ratings)/i.test(text))
       issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Reviews/ratings is a stated feature but there is no reviews table.', fix: 'Add a reviews table (id, user_id, the reviewed entity id e.g. menu_item_id/product_id, rating, comment, created_at) with FKs, and review endpoints.' });
 
-    // Dangling foreign key: a FOREIGN KEY that references a table never CREATE'd
-    // (e.g. reviews.product_id → "products" in a food app that only has menu_items).
-    if (/CREATE TABLE/i.test(text)) {
-      const definedTables = new Set([...text.matchAll(/CREATE TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)/gi)].map(m => m[1].toLowerCase()));
-      const badRefs = new Set();
-      for (const m of text.matchAll(/REFERENCES\s+["`]?(\w+)/gi)) {
-        if (!definedTables.has(m[1].toLowerCase())) badRefs.add(m[1]);
-      }
-      badRefs.forEach(t => issues.push({ severity: 'critical', where: 'Database Schema', problem: `A FOREIGN KEY references table "${t}", which is never defined with a CREATE TABLE.`, fix: `Point the foreign key at an existing table (e.g. menu_items/restaurants for a food app), or add the missing "${t}" table.` }));
-    }
-
     // Django dev server in a production/deployment context
     if (/manage\.py\s+runserver/i.test(text) && /(production|deploy|render|ci\/cd|github actions)/i.test(text))
       issues.push({ severity: 'minor', where: 'Deployment', problem: 'Uses "manage.py runserver" (the development server) for production/deployment.', fix: 'Serve with gunicorn/uvicorn (e.g. gunicorn <project>.wsgi) on Render; runserver is dev-only.' });
-
-    // Generic filler / boilerplate prose detection (content quality).
-    const FILLER = [
-      'easy to use and highly configurable',
-      'easy to use',
-      'fast and reliable',
-      'scalable and maintainable',
-      'robust and scalable',
-      'industry-standard',
-      'industry standard',
-      'best-in-class',
-      'cutting-edge',
-      'state-of-the-art',
-      'highly performant',
-      'seamless integration',
-      'widely adopted'
-    ];
-    const fillerHits = FILLER.filter(p => {
-      const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      return (text.match(re) || []).length >= 2; // only flag when REPEATED → clearly filler
-    });
-    if (fillerHits.length)
-      issues.push({ severity: 'minor', where: 'Rationale / Why Chosen', problem: `Generic filler phrase${fillerHits.length > 1 ? 's' : ''} repeated (${fillerHits.slice(0, 3).join(', ')}). Reads as boilerplate, not a real rationale.`, fix: 'Replace each rationale with a specific reason tied to THIS project (e.g. "Postgres — relational order/payment data needs ACID transactions").' });
-
-    // Identical "Why Chosen" rationale reused across multiple rows = filler.
-    const whyCells = [...text.matchAll(/\|\s*(?:why chosen|rationale|reason)[^\n]*\n((?:\|[^\n]*\n)+)/gi)];
-    whyCells.forEach(block => {
-      const lastCol = block[1].split('\n').map(r => {
-        const cells = r.split('|').map(c => c.trim()).filter(Boolean);
-        return cells[cells.length - 1] || '';
-      }).filter(c => c.length > 8);
-      const counts = {};
-      lastCol.forEach(c => { const k = c.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-      if (Object.values(counts).some(n => n >= 3))
-        issues.push({ severity: 'minor', where: 'Tech Stack table', problem: 'The same "Why Chosen" rationale is copy-pasted across 3+ rows.', fix: 'Give every technology a distinct, project-specific justification.' });
-    });
   }
+
+  // ── Checks below apply to EVERY domain (web, ML, data science, data
+  // analysis, security) — none of them assume a backend/frontend/auth field,
+  // just SQL/table structure or generic table-content patterns that any
+  // domain's template can produce (e.g. the Data Analysis SQL block, or an
+  // ML/security "Rationale" column). ──
+
+  // Dangling foreign key: a FOREIGN KEY that references a table never CREATE'd
+  // (e.g. reviews.product_id → "products" in a food app that only has menu_items).
+  if (/CREATE TABLE/i.test(text)) {
+    const definedTables = new Set([...text.matchAll(/CREATE TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)/gi)].map(m => m[1].toLowerCase()));
+    const badRefs = new Set();
+    for (const m of text.matchAll(/REFERENCES\s+["`]?(\w+)/gi)) {
+      if (!definedTables.has(m[1].toLowerCase())) badRefs.add(m[1]);
+    }
+    badRefs.forEach(t => issues.push({ severity: 'critical', where: 'Database Schema', problem: `A FOREIGN KEY references table "${t}", which is never defined with a CREATE TABLE.`, fix: `Point the foreign key at an existing table, or add the missing "${t}" table.` }));
+  }
+
+  // Generic filler / boilerplate prose detection (content quality).
+  const FILLER = [
+    'easy to use and highly configurable',
+    'easy to use',
+    'fast and reliable',
+    'scalable and maintainable',
+    'robust and scalable',
+    'industry-standard',
+    'industry standard',
+    'best-in-class',
+    'cutting-edge',
+    'state-of-the-art',
+    'highly performant',
+    'seamless integration',
+    'widely adopted'
+  ];
+  const fillerHits = FILLER.filter(p => {
+    const re = new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    return (text.match(re) || []).length >= 2; // only flag when REPEATED → clearly filler
+  });
+  if (fillerHits.length)
+    issues.push({ severity: 'minor', where: 'Rationale / Why Chosen', problem: `Generic filler phrase${fillerHits.length > 1 ? 's' : ''} repeated (${fillerHits.slice(0, 3).join(', ')}). Reads as boilerplate, not a real rationale.`, fix: 'Replace each rationale with a specific reason tied to THIS project (e.g. "Postgres — relational order/payment data needs ACID transactions").' });
+
+  // Identical "Why Chosen"/"Rationale" reused across multiple rows = filler.
+  const whyCells = [...text.matchAll(/\|\s*(?:why chosen|rationale|reason)[^\n]*\n((?:\|[^\n]*\n)+)/gi)];
+  whyCells.forEach(block => {
+    const lastCol = block[1].split('\n').map(r => {
+      const cells = r.split('|').map(c => c.trim()).filter(Boolean);
+      return cells[cells.length - 1] || '';
+    }).filter(c => c.length > 8);
+    const counts = {};
+    lastCol.forEach(c => { const k = c.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+    if (Object.values(counts).some(n => n >= 3))
+      issues.push({ severity: 'minor', where: 'Tech Stack table', problem: 'The same "Why Chosen"/"Rationale" is copy-pasted across 3+ rows.', fix: 'Give every row a distinct, project-specific justification.' });
+  });
 
   // Every explicitly named tool must be mentioned somewhere
   const tools = (brief.otherTools || '').split(/[,+/]| and /i).map(t => t.replace(/\([^)]*\)/g, '').trim()).filter(t => t && t.toLowerCase() !== 'none' && t.length > 1);

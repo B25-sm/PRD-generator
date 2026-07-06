@@ -1424,6 +1424,84 @@ footer a:hover { color: var(--accent2); }
   .field-row { flex-direction: column; }
   .btn-save { width: 100%; }
 }
+
+/* Responsive hardening: keep every section inside the visual viewport. */
+html {
+  width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+
+body, header, main, footer,
+.hero, .domain-select, .domain-pills, .input-card, .examples,
+#api-key-section, #history-section, #brief-card, #progress-area,
+#output-area, #prd-preview {
+  min-width: 0;
+  max-width: 100%;
+}
+
+img, svg, video, canvas, iframe { max-width: 100%; }
+button, input, textarea, select { min-width: 0; max-width: 100%; }
+.hero p, .brief-value, .step-desc, .history-sub, .history-item-name,
+#prd-preview, #prd-preview p, #prd-preview li, #prd-preview td,
+#prd-preview th, pre, code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  header { gap: 12px; }
+  .logo, .header-right { min-width: 0; }
+  .logo { flex-shrink: 1; }
+  .logo span { white-space: nowrap; }
+  .header-right { flex-shrink: 0; }
+  .output-toolbar { flex-wrap: wrap; gap: 10px; }
+  .output-title { flex: 1 1 220px; min-width: 0; }
+  .output-actions { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+}
+
+@media (max-width: 600px) {
+  main { width: 100%; }
+  .hero h1 { font-size: clamp(1.9rem, 10vw, 2.55rem); }
+  .hero p { width: 100%; }
+  .groq-pill { max-width: 100%; white-space: normal; justify-content: center; }
+  .domain-pills { grid-template-columns: minmax(0, 1fr); }
+  .domain-pill { width: 100%; }
+  .input-footer { align-items: flex-end; gap: 10px; }
+  .shortcut-hint { text-align: right; }
+  .history-head-left { min-width: 0; }
+  .history-stats { flex-wrap: wrap; }
+  .history-stat { flex: 1 1 80px; min-width: 0; }
+  .history-item-tokens { display: none; }
+  .brief-header { align-items: flex-start; padding: 15px 16px; }
+  #brief-body, #tech-confirm-panel { padding-left: 16px !important; padding-right: 16px !important; }
+  .stack-fix-notice, .assume-notice { margin-left: 16px; margin-right: 16px; }
+  .rate-wait-panel { flex-direction: column; align-items: flex-start; }
+  .rate-wait-copy { min-width: 0; width: 100%; }
+  .output-toolbar { align-items: stretch; }
+  .output-title, .output-actions { flex-basis: 100%; }
+  .output-actions { justify-content: stretch; }
+  .output-actions button { flex: 1 1 auto; }
+  footer { padding: 16px 14px; }
+}
+
+@media (max-width: 420px) {
+  header { padding-inline: 10px; }
+  .logo { gap: 6px; font-size: 0.82rem; }
+  .logo-icon { flex: 0 0 25px; }
+  .header-right { gap: 5px; }
+  .btn-settings { width: 32px; padding: 0; justify-content: center; }
+  .rate-badge { display: none; }
+  main { padding-inline: 10px; }
+  .input-card { padding-inline: 14px; }
+  .examples-label { line-height: 1.5; }
+  .example-chips { gap: 7px; }
+  .chip { max-width: 100%; white-space: normal; }
+  .history-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .history-stat { padding-inline: 4px; }
+  .history-stat-label { font-size: 0.58rem; }
+}
 </style>
 </head>
 <body>

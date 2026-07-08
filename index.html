@@ -3001,6 +3001,26 @@ function inferWebStack(brief) {
   };
 }
 
+// Maps the chosen database to its real DDL syntax / Docker image / connection scheme
+// so Section 6 (schema), Section 13 (Docker Compose), and Section 15 (env vars) never
+// default to Postgres-only syntax (BIGSERIAL, TIMESTAMP WITH TIME ZONE, postgres:16)
+// for a project that actually chose MySQL, SQLite, SQL Server, or MongoDB.
+function inferSqlDialect(database) {
+  const db = (database || '').toLowerCase();
+  if (/mongo/.test(db))
+    return { kind: 'mongo', dialectName: 'MongoDB', dockerImage: 'mongo:7', dockerEnvVars: ['MONGO_INITDB_ROOT_USERNAME', 'MONGO_INITDB_ROOT_PASSWORD'], connScheme: 'mongodb://', port: 27017 };
+  if (/mariadb/.test(db))
+    return { kind: 'sql', dialectName: 'MariaDB', pkType: 'BIGINT AUTO_INCREMENT', tsType: 'DATETIME', boolType: 'TINYINT(1)', dockerImage: 'mariadb:11', dockerEnvVars: ['MARIADB_USER', 'MARIADB_PASSWORD', 'MARIADB_DATABASE', 'MARIADB_ROOT_PASSWORD'], connScheme: 'mysql://', port: 3306 };
+  if (/mysql/.test(db))
+    return { kind: 'sql', dialectName: 'MySQL', pkType: 'BIGINT AUTO_INCREMENT', tsType: 'DATETIME', boolType: 'TINYINT(1)', dockerImage: 'mysql:8', dockerEnvVars: ['MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_DATABASE', 'MYSQL_ROOT_PASSWORD'], connScheme: 'mysql://', port: 3306 };
+  if (/sqlite/.test(db))
+    return { kind: 'sql', dialectName: 'SQLite', pkType: 'INTEGER PRIMARY KEY AUTOINCREMENT', tsType: 'TEXT (ISO-8601 string)', boolType: 'INTEGER (0 or 1)', dockerImage: null, dockerEnvVars: [], connScheme: 'file:', port: null };
+  if (/sql server|mssql/.test(db))
+    return { kind: 'sql', dialectName: 'SQL Server', pkType: 'BIGINT IDENTITY(1,1)', tsType: 'DATETIME2', boolType: 'BIT', dockerImage: 'mcr.microsoft.com/mssql/server:2022-latest', dockerEnvVars: ['MSSQL_SA_PASSWORD', 'ACCEPT_EULA=Y'], connScheme: 'sqlserver://', port: 1433 };
+  // Default / explicit Postgres — also covers Supabase, CockroachDB, Neon (Postgres-wire-compatible).
+  return { kind: 'sql', dialectName: 'PostgreSQL', pkType: 'BIGSERIAL', tsType: 'TIMESTAMP WITH TIME ZONE', boolType: 'BOOLEAN', dockerImage: 'postgres:16', dockerEnvVars: ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB'], connScheme: 'postgresql://', port: 5432 };
+}
+
 // Auto-correct a brief so auth/runtime/stack fields are internally consistent
 // BEFORE the PRD is ever generated. Returns { brief, fixes: string[] }.
 function enforceStackConsistency(brief) {
@@ -3116,6 +3136,54 @@ function buildWebPrompt(brief) {
   const isFood   = /food|restaurant|menu|delivery|meal|order hub/.test(featAll);
   const isEcom   = /e-?commerce|marketplace|shop|cart|checkout|product|store/.test(featAll);
   const hasStripe = /stripe/i.test(brief.otherTools || '');
+  const hasCartFeature = /\bcart\b/i.test(featAll);
+  const hasOwnerRole = /seller|vendor|multi-vendor|multi vendor|author|creator|listing owner|marketplace/i.test(featAll);
+  const hasAdminRole = /\badmin\b|moderat/i.test(featAll);
+  const dialect = inferSqlDialect(brief.database);
+
+  // Section 8 depth scales with level — the OLD always-4-row RBAC + always-refresh-
+  // rotation example (fine for Advanced) directly contradicted Basic/Intermediate's
+  // "no refresh rotation / no multi-role RBAC" instructions, since a concrete example
+  // this late in the prompt tends to win over an abstract rule stated earlier.
+  const permissionRows = ['Anonymous', 'Authenticated', hasOwnerRole ? 'Owner' : null, (lvl.id !== 'basic' || hasAdminRole) ? 'Staff/Admin' : null].filter(Boolean);
+  const authSection = lvl.id === 'basic' ? `### Auth Lifecycle
+Numbered steps: register → login → token issued → request with token → token expires → re-login. ONE token only (a session cookie or a single non-rotating JWT) — no refresh-token flow, no email verification step.
+### Token Strategy
+| Property | Value | Rationale |
+(3-4 rows: token type, lifetime, storage, algorithm — a SINGLE token; NO refresh token row, NO rotation row)
+### Permission Model
+| Level | Who | Allowed Actions |
+(${permissionRows.join(', ')} — exactly ${permissionRows.length} rows; do NOT add a Staff/Admin tier unless admin/moderation was a stated feature)
+Object-level permission check flow described in prose (no code).` : lvl.id === 'intermediate' ? `### Auth Lifecycle
+Numbered steps: register → login → token issued → request with token → token expires → refresh → logout.
+### Token Strategy
+| Property | Value | Rationale |
+(5-6 rows: access token lifetime, refresh token lifetime, storage, algorithm, rotation policy)
+### JWT Config Reference
+\`\`\`
+[access + refresh lifetimes, rotation flag, algorithm — real values, not placeholders]
+\`\`\`
+### Permission Model
+| Level | Who | Allowed Actions |
+(${permissionRows.join(', ')} — ${permissionRows.length} rows)
+Object-level permission check flow described in prose (no code).` : `### Auth Lifecycle
+Numbered steps: register → verify email → login → token issued → request with token → token expires → refresh → logout → revoke.
+### Token Strategy
+| Property | Value | Rationale |
+| Access token lifetime | 15 min | Limits exposure window |
+| Refresh token lifetime | 7 days | Balance UX vs security |
+| Access token storage | In-memory (matching the state library chosen in Sections 2/5/9) | XSS-safe; never persisted |
+| Refresh token storage | httpOnly cookie | JS-inaccessible; SameSite=Strict |
+| Algorithm | HS256 | Single-service sufficient |
+| Rotation | On every refresh | Single-use; old token blacklisted |
+### JWT Config Reference
+\`\`\`
+ACCESS_TOKEN_LIFETIME = 15m | REFRESH_TOKEN_LIFETIME = 7d | ROTATE = true | ALGORITHM = HS256
+\`\`\`
+### Permission Model
+| Level | Who | Allowed Actions |
+(Anonymous, Authenticated, Owner, Staff/Admin — 4 rows)
+Object-level permission check flow described in prose (no code).`;
 
   const extras = [
     hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy. Redis group strategy. NO consumer or hook code.` : '',
@@ -3147,8 +3215,15 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
 - State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
 - NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
+- DATABASE DIALECT — NON-NEGOTIABLE: the database is ${dialect.dialectName}. ${dialect.kind === 'mongo'
+    ? 'Section 6 MUST use Mongoose/MongoDB document schema (fields, types, refs, indexes) — NEVER SQL CREATE TABLE syntax.'
+    : `Section 6's DDL MUST use ${dialect.dialectName}-valid syntax ONLY: primary keys as ${dialect.pkType}, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}. NEVER use another dialect's syntax (e.g. no BIGSERIAL/TIMESTAMP WITH TIME ZONE unless the database is genuinely PostgreSQL; no AUTO_INCREMENT/DATETIME unless it's genuinely MySQL/MariaDB).`}
+  Section 13's Docker Compose and Section 15's DATABASE_URL/connection string MUST match this same dialect (${dialect.dockerImage ? `db image "${dialect.dockerImage}"` : 'no separate db container — mount the file-based database as a volume'}, scheme "${dialect.connScheme}") — never default to Postgres for a non-Postgres database.
+- FIELD NAME CONSISTENCY: a column/field referring to the same concept (e.g. a product reference inside order_items) MUST use the IDENTICAL name in the Database Schema, API request fields, and Business Rules — pick one name (e.g. product_id) and never rename it between sections (e.g. item_id in the schema vs product_id in the API).
+- OWNERSHIP CONSISTENCY: if Section 8's Permission Model defines an "Owner" role for a resource (e.g. products, posts), Section 6's schema for that resource MUST include the user-reference FK that makes ownership checkable (e.g. seller_id, author_id, owner_id) — never grant an Owner permission the schema can't actually enforce.
+- FEATURE COVERAGE: every item in FEATURES above must show up as concrete schema tables, API endpoints, or UI routes — never silently drop a stated feature. If a feature implies a multi-step workflow (e.g. "cart management" implies add-to-cart THEN checkout, not a single-step purchase), the schema and API must support that actual workflow.
 ${isNext ? `- Next.js frontend rules: App Router (NOT React Router); built-in bundler (NOT standalone Webpack/Vite); env vars use NEXT_PUBLIC_* (NEVER VITE_*); dev port 3000 (NOT 5173).` : ''}
-${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status.` : `- NOT food/e-commerce: do NOT add menu_items, order_items, orders, or restaurant/delivery tables unless the user explicitly asked for them.`}
+${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status. orders.status values must fit THIS domain (e.g. pending/paid/shipped/delivered/cancelled for e-commerce; pending/confirmed/preparing/delivered/cancelled only for genuine food delivery) — do not default to food-delivery vocabulary for a non-food store.${hasCartFeature ? ' Cart management is a stated feature: include a cart (or cart_items) table/endpoints (add/remove/view) and a checkout endpoint that converts the cart into an order with its order_items — even without Stripe, mark the order paid/placed via a simple status or is_paid flag; never skip straight from "browse" to "single-item order" when cart management was requested.' : ''}${hasOwnerRole ? ' This is a multi-seller/marketplace project: products MUST reference the selling user (seller_id FK) so per-seller ownership and listings can be enforced.' : ''}` : `- NOT food/e-commerce: do NOT add menu_items, order_items, orders, or restaurant/delivery tables unless the user explicitly asked for them.`}
 ${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
 ${/cloudinary/i.test(brief.otherTools || '') ? `- Cloudinary MUST appear in: image URL columns in schema, upload endpoint, CLOUDINARY_* env vars.` : ''}
 ${/sendgrid/i.test(brief.otherTools || '') ? `- SendGrid MUST appear in: email row in backend table, SENDGRID_API_KEY env var, order-confirmation email in business rules.` : ''}
@@ -3165,7 +3240,7 @@ Write a professional PRD in Markdown. Specification prose + tables only. No code
 5 measurable product goals.
 ### Non-Goals
 Out-of-scope items with one-line reason each.
-
+${lvl.id === 'basic' ? '### What You\'ll Practice\n4-6 concrete skills/concepts this project teaches (e.g. OOP encapsulation, CRUD operations, REST basics, form validation, simple auth, Git basics) — this section is REQUIRED for a Basic-level PRD, do not omit it.\n' : ''}
 ## 2. Tech Stack Overview
 ### Backend
 | Layer | Technology | Version | Purpose | Why Chosen |
@@ -3213,10 +3288,12 @@ src/ file tree — every folder with ← responsibility comment
 (auth tokens, user profile, server cache, form state, URL filters)
 
 ## 6. Database Schema
-\`\`\`sql
-Full CREATE TABLE DDL for every entity: exact types (BIGSERIAL, VARCHAR(255), TEXT, TIMESTAMP WITH TIME ZONE, BOOLEAN), NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
-CRITICAL ORDERING: A table must be created AFTER every table it references with a FOREIGN KEY. Emit independent tables first, then dependent ones (dependency order), so the script runs top-to-bottom without "relation does not exist" errors.
-\`\`\`
+${dialect.kind === 'mongo' ? `\`\`\`javascript
+Mongoose schema for every collection: field, type, required, unique, default, ref (for relationships), timestamps: true. NOT SQL — this project uses MongoDB, never CREATE TABLE.
+\`\`\`` : `\`\`\`sql
+Full CREATE TABLE DDL for every entity, in valid ${dialect.dialectName} syntax ONLY: primary keys as ${dialect.pkType}, VARCHAR(255), TEXT, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}, NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
+CRITICAL ORDERING: A table must be created AFTER every table it references with a FOREIGN KEY. Emit independent tables first, then dependent ones (dependency order), so the script runs top-to-bottom without errors.
+\`\`\``}
 ### Query Patterns
 One sentence per major access pattern: what's fetched, join strategy, why (e.g. select_related vs prefetch_related to avoid N+1).
 ### Data Integrity Rules
@@ -3239,24 +3316,7 @@ Detail: { "id": 1, "field": "value", "created_at": "2026-01-15T10:30:00Z" }
 For each non-trivial endpoint: validation rules, permission checks, side effects (emails, notifications, cache busts).
 
 ## 8. Authentication & Authorization
-### Auth Lifecycle
-Numbered steps: register → verify email → login → token issued → request with token → token expires → refresh → logout → revoke.
-### Token Strategy
-| Property | Value | Rationale |
-| Access token lifetime | 15 min | Limits exposure window |
-| Refresh token lifetime | 7 days | Balance UX vs security |
-| Access token storage | In-memory (Redux) | XSS-safe; never persisted |
-| Refresh token storage | httpOnly cookie | JS-inaccessible; SameSite=Strict |
-| Algorithm | HS256 | Single-service sufficient |
-| Rotation | On every refresh | Single-use; old token blacklisted |
-### JWT Config Reference
-\`\`\`
-ACCESS_TOKEN_LIFETIME = 15m | REFRESH_TOKEN_LIFETIME = 7d | ROTATE = true | ALGORITHM = HS256
-\`\`\`
-### Permission Model
-| Level | Who | Allowed Actions |
-(Anonymous, Authenticated, Owner, Staff/Admin — 4 rows)
-Object-level permission check flow described in prose (no code).
+${authSection}
 
 ## 9. State Management
 ### Global Store Shape
@@ -3303,7 +3363,7 @@ Separate DB setup, mocked external services, seed data strategy.
 | SQL Injection | ORM parameterized queries | All DB access via ${stack.orm}; raw SQL banned | P0 |
 | XSS | Output escaping + CSP header | Framework escapes by default; CSP blocks inline scripts | P0 |
 | CSRF | SameSite=Strict cookie | Refresh cookie: SameSite=Strict; CSRF middleware enabled | P0 |
-| JWT Theft | Short-lived in-memory tokens | 15-min access token in Redux only; never localStorage | P0 |
+| JWT Theft | Short-lived in-memory tokens | Token lifetime and storage matching Section 8's Token Strategy; never localStorage | P0 |
 | Brute Force | Rate limiting on auth | 5 failures/min/IP → 429; exponential lockout | P0 |
 | CORS | Origin whitelist | ALLOWED_ORIGINS = [production frontend URL only] | P0 |
 | Secrets | Env vars only | No credentials in code; .env in .gitignore | P0 |
@@ -3314,7 +3374,7 @@ Separate DB setup, mocked external services, seed data strategy.
 ## 13. Deployment Guide
 ### Development (Docker Compose)
 \`\`\`yaml
-[docker-compose.yml: db (postgres:16), ${hasCache ? 'redis (redis:7-alpine), ' : ''}backend (port 8000), frontend (port 5173)${hasTasks ? ', worker, beat' : ''}. Env vars, volumes, depends_on, healthchecks.]
+[docker-compose.yml: ${dialect.dockerImage ? `db (${dialect.dockerImage}) with env vars ${dialect.dockerEnvVars.join(', ')}` : 'NO separate db container — SQLite is a local file, mount it as a volume into the backend service instead'}, ${hasCache ? 'redis (redis:7-alpine), ' : ''}backend (port 8000), frontend (port 5173)${hasTasks ? ', worker, beat' : ''}. Volumes, depends_on, healthchecks.]
 \`\`\`
 ### Production Architecture
 \`\`\`

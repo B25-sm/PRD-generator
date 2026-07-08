@@ -1036,6 +1036,27 @@ textarea::placeholder { color: var(--text-muted); }
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0,0,0,0.4);
 }
+.level-gate-modal { max-width: 560px; }
+.level-gate-pills {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.level-gate-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  font-family: var(--sans);
+  color: var(--text);
+}
+.level-gate-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
 .idea-picker-header {
   display: flex;
   align-items: flex-start;
@@ -1907,6 +1928,32 @@ button, input, textarea, select { min-width: 0; max-width: 100%; }
     </div>
   </div>
 
+  <!-- Level Gate — blocking one-time prompt before the first generate -->
+  <div id="level-gate-overlay" class="idea-picker-overlay" style="display:none;" onclick="if(event.target===this) closeLevelGate()">
+    <div class="idea-picker-modal level-gate-modal">
+      <div class="idea-picker-header">
+        <div>
+          <div class="idea-picker-title">🎯 What level is this PRD for?</div>
+          <div class="idea-picker-sub">Pick the complexity that matches who's building this — you can change it anytime from the pills above.</div>
+        </div>
+      </div>
+      <div class="level-gate-pills" style="padding:16px 22px 22px;">
+        <button type="button" class="level-gate-pill" data-gate-level="basic" onclick="confirmLevelGate('basic')">
+          <span class="domain-pill-icon">🌱</span>
+          <span class="domain-pill-text"><strong>Basic</strong><small>Beginner / student project · core CRUD only</small></span>
+        </button>
+        <button type="button" class="level-gate-pill" data-gate-level="intermediate" onclick="confirmLevelGate('intermediate')">
+          <span class="domain-pill-icon">⚙️</span>
+          <span class="domain-pill-text"><strong>Intermediate</strong><small>Real-world app · a couple integrations</small></span>
+        </button>
+        <button type="button" class="level-gate-pill" data-gate-level="advanced" onclick="confirmLevelGate('advanced')">
+          <span class="domain-pill-icon">🚀</span>
+          <span class="domain-pill-text"><strong>Advanced</strong><small>Production-grade · scalable · enterprise depth</small></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <button class="btn-generate" id="gen-btn" onclick="generatePRD()">
     ⚡ Understand My Idea
   </button>
@@ -2614,6 +2661,10 @@ Object.keys(DOMAIN_IDEA_PLACEHOLDERS).forEach(k => { DOMAINS[k].ideaPlaceholder 
 //  project; "advanced" is today's default production-grade depth.
 // ═══════════════════════════════════════════════════════════
 let currentLevel = 'advanced';
+// Tracks whether the user has ever consciously picked a level (via the pills
+// or the gate prompt). Until they have, generatePRD() interrupts with a
+// one-time "what level is this for?" prompt instead of silently defaulting.
+let _levelTouched = false;
 
 const LEVELS = {
   basic: {
@@ -2664,10 +2715,30 @@ function getLevel(id) { return LEVELS[id] || LEVELS.advanced; }
 function selectLevel(id) {
   if (!LEVELS[id]) return;
   currentLevel = id;
+  _levelTouched = true;
   document.querySelectorAll('.level-pill').forEach(el => {
     el.classList.toggle('active', el.getAttribute('data-level') === id);
   });
   renderIdeaPickerLevels();
+}
+
+// ── Level gate — a one-time blocking prompt so the level is always an
+// explicit choice, not a silently-applied default, the first time someone
+// generates in a session. ──
+function openLevelGate() {
+  const overlay = document.getElementById('level-gate-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function closeLevelGate() {
+  const overlay = document.getElementById('level-gate-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function confirmLevelGate(id) {
+  selectLevel(id);
+  closeLevelGate();
+  runGeneratePRD();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4514,6 +4585,19 @@ async function generatePRD() {
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
+
+  // First generate this session: force an explicit level choice instead of
+  // silently applying the Advanced default.
+  if (!_levelTouched) {
+    openLevelGate();
+    return;
+  }
+
+  await runGeneratePRD();
+}
+
+async function runGeneratePRD() {
+  const idea = document.getElementById('idea-input').value.trim();
 
   const rateCheck = checkRateLimit();
   if (rateCheck.blocked) {

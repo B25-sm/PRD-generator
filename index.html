@@ -2204,12 +2204,20 @@ let _rateLimitSession = { budgetSec: 0, elapsedSec: 0, pauseCount: 0, streakWait
 let _genPhase = 'generate'; // 'understand' (Stage 1) or 'generate' (Stage 2+) — for wait messaging
 let apiKey = localStorage.getItem(STORAGE_KEY_API) || '';
 
+// Set by pickIdea() for a known plain-console pick (Core Java / Core Python, Basic
+// tier). Stage 1 runs on a small/fast model that isn't reliably following a "this is a
+// console app" instruction buried in prose — so instead of trusting it, we force the
+// stack fields deterministically once we already know the answer from the pick itself.
+// Cleared the moment the user types (a genuine edit invalidates the assumption).
+let _pendingConsoleOverride = null;
+
 // ═══════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('idea-input').addEventListener('input', e => {
     document.getElementById('char-count').textContent = e.target.value.length;
+    _pendingConsoleOverride = null;
   });
 
   if (apiKey) {
@@ -2865,6 +2873,17 @@ function pickIdea(categoryKey, ideaName) {
   const ta = document.getElementById('idea-input');
   ta.value = `${ideaName} — ${hint}`;
   document.getElementById('char-count').textContent = ta.value.length;
+
+  // "Core Java" and "Core Python" (Basic tier) are plain console programs with no web
+  // stack at all — set the override so Stage 1's small model doesn't get a chance to
+  // reinvent React/Node/Mongo for them (see _pendingConsoleOverride above). Records the
+  // level/domain at pick-time too, so switching the level pill afterward (before
+  // generating) safely invalidates it instead of forcing a console stack onto whatever
+  // complexity the user ends up choosing.
+  _pendingConsoleOverride = (currentLevel === 'basic' && (categoryKey === 'java' || categoryKey === 'python'))
+    ? { language: categoryKey === 'java' ? 'Java' : 'Python', level: currentLevel, domain: cat.domain }
+    : null;
+
   closeIdeaPicker();
   ta.focus();
   ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -4772,6 +4791,20 @@ async function runGeneratePRD() {
 
     brief.domain = currentDomainId;
     brief.level = currentLevel;
+
+    // Deterministic override for a known plain-console pick (see pickIdea) — only
+    // applies if the level/domain still match what it was picked under.
+    if (_pendingConsoleOverride && brief.domain === _pendingConsoleOverride.domain && brief.level === _pendingConsoleOverride.level) {
+      const lang = _pendingConsoleOverride.language;
+      brief.frontend = 'None (console application)';
+      brief.backend = `${lang} (plain, console-based, no framework)`;
+      brief.database = 'File-based storage (e.g. serialized objects or a CSV/JSON file)';
+      brief.auth = 'None (single local user)';
+      brief.hosting = 'N/A — runs locally, no hosting needed';
+      brief.otherTools = 'None';
+    }
+    _pendingConsoleOverride = null;
+
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);
     brief = enforced.brief;

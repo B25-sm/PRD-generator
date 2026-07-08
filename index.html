@@ -939,12 +939,12 @@ textarea::placeholder { color: var(--text-muted); }
   color: var(--text-muted);
   margin-bottom: 10px;
 }
-.domain-pills {
+.domain-pills, .level-pills {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
 }
-.domain-pill {
+.domain-pill, .level-pill {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -958,8 +958,8 @@ textarea::placeholder { color: var(--text-muted); }
   font-family: var(--sans);
   color: var(--text);
 }
-.domain-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
-.domain-pill.active {
+.domain-pill:hover, .level-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
+.domain-pill.active, .level-pill.active {
   border-color: var(--accent);
   background: linear-gradient(135deg, rgba(245,80,54,0.12), rgba(255,123,94,0.05));
   box-shadow: 0 0 0 3px rgba(245,80,54,0.10);
@@ -970,11 +970,143 @@ textarea::placeholder { color: var(--text-muted); }
 .domain-pill-text small { font-size: 0.66rem; color: var(--text-muted); margin-top: 2px; }
 
 @media (max-width: 860px) {
-  .domain-pills { grid-template-columns: 1fr 1fr; }
+  .domain-pills, .level-pills { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 480px) {
-  .domain-pills { grid-template-columns: 1fr; }
+  .domain-pills, .level-pills { grid-template-columns: 1fr; }
 }
+
+/* ─────────── LEVEL SELECTOR ─────────── */
+.level-select-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.browse-ideas-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.browse-ideas-link:hover { text-decoration: underline; }
+.level-pills { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 640px) {
+  .level-pills { grid-template-columns: 1fr; }
+}
+.level-pill-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(245,80,54,0.12);
+  border-radius: 5px;
+  padding: 1px 6px;
+  margin-top: 4px;
+}
+
+/* ─────────── IDEA PICKER MODAL ─────────── */
+.idea-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(2px);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.idea-picker-modal {
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 780px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+.idea-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.idea-picker-title { font-size: 1rem; font-weight: 800; }
+.idea-picker-sub { font-size: 0.76rem; color: var(--text-muted); margin-top: 3px; }
+.idea-picker-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 1.1rem; cursor: pointer; padding: 2px 6px; line-height: 1;
+}
+.idea-picker-close:hover { color: var(--text); }
+.idea-picker-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 22px 0;
+  flex-shrink: 0;
+}
+.idea-tab {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.idea-tab.active { border-color: var(--accent); background: rgba(245,80,54,0.12); color: var(--accent); }
+.idea-picker-levels {
+  display: flex;
+  gap: 6px;
+  padding: 10px 22px 0;
+  flex-shrink: 0;
+}
+.idea-level-tab {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex: 1;
+}
+.idea-level-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(245,80,54,0.08); }
+.idea-picker-list {
+  padding: 14px 22px 22px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+.idea-chip {
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.idea-chip:hover { border-color: var(--accent); transform: translateY(-1px); }
 
 .stack-fix-notice {
   margin: 12px 22px 0;
@@ -1029,6 +1161,11 @@ textarea::placeholder { color: var(--text-muted); }
 }
 @media (max-width: 600px) {
   .verify-badge { margin-left: 0; margin-top: 6px; white-space: normal; }
+}
+.level-badge {
+  background: rgba(245,80,54,0.12);
+  color: var(--accent);
+  border: 1px solid rgba(245,80,54,0.3);
 }
 
 /* ─────────── TECH CONFIRM PANEL ─────────── */
@@ -1719,6 +1856,28 @@ button, input, textarea, select { min-width: 0; max-width: 100%; }
     </div>
   </div>
 
+  <!-- Level selector -->
+  <div class="domain-select">
+    <div class="level-select-row">
+      <div class="domain-select-label" style="margin-bottom:0;">Project complexity level</div>
+      <button type="button" class="browse-ideas-link" onclick="openIdeaPicker()">🎓 Browse beginner project ideas →</button>
+    </div>
+    <div class="level-pills">
+      <button type="button" class="level-pill" data-level="basic" onclick="selectLevel('basic')">
+        <span class="domain-pill-icon">🌱</span>
+        <span class="domain-pill-text"><strong>Basic</strong><small>Beginner / student project · core CRUD only</small></span>
+      </button>
+      <button type="button" class="level-pill" data-level="intermediate" onclick="selectLevel('intermediate')">
+        <span class="domain-pill-icon">⚙️</span>
+        <span class="domain-pill-text"><strong>Intermediate</strong><small>Real-world app · a couple integrations</small></span>
+      </button>
+      <button type="button" class="level-pill active" data-level="advanced" onclick="selectLevel('advanced')">
+        <span class="domain-pill-icon">🚀</span>
+        <span class="domain-pill-text"><strong>Advanced</strong><small>Production-grade · scalable · enterprise depth</small></span>
+      </button>
+    </div>
+  </div>
+
   <!-- Input -->
   <div class="input-card">
     <label class="input-label" for="idea-input">Describe Your Project Idea</label>
@@ -1729,6 +1888,22 @@ button, input, textarea, select { min-width: 0; max-width: 100%; }
     <div class="input-footer">
       <span class="char-count"><span id="char-count">0</span> chars</span>
       <span class="shortcut-hint"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> to generate</span>
+    </div>
+  </div>
+
+  <!-- Idea Picker Modal -->
+  <div id="idea-picker-overlay" class="idea-picker-overlay" style="display:none;" onclick="if(event.target===this) closeIdeaPicker()">
+    <div class="idea-picker-modal">
+      <div class="idea-picker-header">
+        <div>
+          <div class="idea-picker-title">📚 Project Idea Library</div>
+          <div class="idea-picker-sub">Pick a tech stack and a level — click a project to fill it in below.</div>
+        </div>
+        <button class="idea-picker-close" onclick="closeIdeaPicker()">✕</button>
+      </div>
+      <div class="idea-picker-tabs" id="idea-picker-tabs"></div>
+      <div class="idea-picker-levels" id="idea-picker-levels"></div>
+      <div class="idea-picker-list" id="idea-picker-list"></div>
     </div>
   </div>
 
@@ -1801,6 +1976,7 @@ button, input, textarea, select { min-width: 0; max-width: 100%; }
       <div class="output-title">
         <div class="dot"></div>
         PRD Generated
+        <span class="verify-badge level-badge" id="level-badge" style="display:none;"></span>
         <span class="verify-badge" id="verify-badge" style="display:none;"></span>
       </div>
       <div class="btn-group">
@@ -2433,6 +2609,194 @@ const DOMAIN_IDEA_PLACEHOLDERS = {
 Object.keys(DOMAIN_IDEA_PLACEHOLDERS).forEach(k => { DOMAINS[k].ideaPlaceholder = DOMAIN_IDEA_PLACEHOLDERS[k]; });
 
 // ═══════════════════════════════════════════════════════════
+//  LEVELS — controls how ambitious/complex the generated PRD is.
+//  "basic" is aimed at a beginner/student being assigned a first
+//  project; "advanced" is today's default production-grade depth.
+// ═══════════════════════════════════════════════════════════
+let currentLevel = 'advanced';
+
+const LEVELS = {
+  basic: {
+    id: 'basic', label: 'Basic', icon: '🌱',
+    audience: 'a beginner or student building this as a learning project',
+    expandGuidance: `COMPLEXITY LEVEL = BASIC (beginner/student project). Keep scope small and achievable solo in 1-3 weeks: exactly 3-5 coreFeatures, all straightforward CRUD/core-logic capabilities. niceToHave should have at most 2 items. Choose the SIMPLEST viable stack for the stated language/domain (e.g. plain Spring Boot + MySQL, or Node + Express + MongoDB, or Django + SQLite) — do NOT introduce Redis, Kafka/RabbitMQ, microservices, GraphQL, WebSockets, Docker orchestration, or third-party paid APIs unless the user's idea explicitly asks for them. otherTools should usually be "None". auth should be simple (plain session or a single JWT) — no OAuth/social login, no refresh-token rotation, no multi-role RBAC beyond a plain user/admin split.`,
+    promptBlock: (audienceNote) => `
+COMPLEXITY LEVEL — BASIC (write this for ${audienceNote}):
+- This PRD will be handed to someone building their FIRST or an early version of this kind of project — treat it as a learning assignment, not a production system.
+- SCOPE: cover only the features actually listed — do not invent extra modules, admin dashboards, analytics, or integrations the user didn't ask for.
+- STACK SIMPLICITY: no microservices, no message queues/background workers, no Redis/caching layer, no WebSockets/real-time, no container orchestration, no multi-environment CI/CD pipeline — UNLESS the feature list genuinely requires one of these. Prefer a single monolith, a single database, and manual/simple deployment steps.
+- AUTH: plain session-based login or a single non-rotating JWT; a basic user/admin role check is enough — no refresh-token rotation, no OAuth providers, no fine-grained permission matrix.
+- DATA: 3-6 tables/entities with simple relationships; skip advanced indexing/caching strategy discussion beyond "index the foreign keys and lookup columns."
+- LANGUAGE: explain every acronym and pattern in plain words the first time it's used — assume the reader is new to professional software engineering. No unexplained jargon.
+- TABLE ROW COUNTS: wherever a section says "(N+ rows)", use roughly HALF of N (or fewer) — only as many rows as this small project genuinely needs. Do not pad tables to look impressive.
+- TESTING: list only the 4-6 most important test cases (core happy paths + the one or two most likely mistakes) — skip elaborate test pyramids, load testing, or chaos testing.
+- DEPLOYMENT: one free-tier host, a short list of manual steps — skip Docker Compose multi-service orchestration and CI/CD pipelines unless trivial (a single lint+test step is fine).
+- PERFORMANCE/OBSERVABILITY: 2-3 sensible numbers is enough; skip SLOs, APM stacks, and load-test tooling.
+- Immediately under the Executive Summary, add a "### What You'll Practice" subsection: 4-6 concrete skills/concepts this project teaches (e.g. OOP encapsulation, CRUD operations, basic REST endpoints, form validation, simple auth, Git basics) — this is what makes it useful as an assigned learning project.
+- Tone: encouraging and clear — this is a project to learn fundamentals on, not to survive production traffic.`
+  },
+  intermediate: {
+    id: 'intermediate', label: 'Intermediate', icon: '⚙️',
+    audience: 'a developer with some experience building a portfolio-worthy real-world app',
+    expandGuidance: `COMPLEXITY LEVEL = INTERMEDIATE (real-world portfolio project). 5-7 coreFeatures, including at most one or two genuine integrations (e.g. payments, file upload, email, a single third-party API) if relevant to the idea. Choose a standard, widely-used stack. Introduce a background job, cache, or real-time layer ONLY if the feature set genuinely needs it (e.g. chat needs WebSockets; a media pipeline needs a queue) — don't add infrastructure the features don't call for.`,
+    promptBlock: (audienceNote) => `
+COMPLEXITY LEVEL — INTERMEDIATE (write this for ${audienceNote}):
+- SCOPE: a real-world app with a handful of features plus at most one or two genuine integrations — solid but not over-engineered.
+- STACK: standard production patterns are fine (JWT with basic refresh, simple RBAC of user/admin). Only introduce caching, background jobs, or WebSockets if the stated features genuinely require them — do not add infrastructure the feature list doesn't call for.
+- TABLE ROW COUNTS: use a moderate row count — enough to cover the real features and the one or two integrations, without padding for enterprise scale.
+- TESTING: solid coverage of the core flows and main edge cases — not an exhaustive test pyramid.
+- DEPLOYMENT: free-tier hosting is fine; a simple CI step (lint + test on PR) is appropriate, full multi-stage pipelines are not required.
+- Tone: professional and practical — this should read like a strong portfolio project, not a student exercise or an enterprise system.`
+  },
+  advanced: {
+    id: 'advanced', label: 'Advanced', icon: '🚀',
+    audience: 'engineering leads and developers shipping a production system',
+    expandGuidance: `COMPLEXITY LEVEL = ADVANCED (production-grade). 5-7 coreFeatures with realistic integrations where the idea calls for them (payments, real-time, background processing, caching) — infer the full production stack a team would actually ship.`,
+    promptBlock: (audienceNote) => `
+COMPLEXITY LEVEL — ADVANCED (write this for ${audienceNote}):
+- This is a production-grade, enterprise-depth specification. Use the full depth implied by every section below: proper auth lifecycle with refresh-token rotation, RBAC where relevant, caching/background jobs/real-time layers where the features call for them, a full test pyramid, CI/CD, and observability.
+- Do not scale anything down — match the row counts and depth the section instructions already ask for.`
+  }
+};
+
+function getLevel(id) { return LEVELS[id] || LEVELS.advanced; }
+
+function selectLevel(id) {
+  if (!LEVELS[id]) return;
+  currentLevel = id;
+  document.querySelectorAll('.level-pill').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-level') === id);
+  });
+  renderIdeaPickerLevels();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PROJECT IDEA LIBRARY — curated starter ideas, grouped by tech
+//  stack and level. Mainly aimed at beginners/instructors who want
+//  to pick a recognizable assignment instead of typing one from
+//  scratch. Selecting an idea fills the textarea and sets the
+//  matching domain + level.
+// ═══════════════════════════════════════════════════════════
+const PROJECT_IDEA_CATEGORIES = {
+  java: {
+    label: 'Java', icon: '☕', domain: 'web',
+    stackHint: { basic: 'plain Java (console app, OOP, collections)', intermediate: 'Java + JDBC (MySQL)', advanced: 'Java Spring Boot, full-stack' },
+    basic: ['Student Management System', 'Library Management System', 'Bank Management System', 'Employee Payroll System', 'Inventory Management System', 'Hotel Reservation System', 'Online Quiz Application', 'ATM Simulation System', 'Airline Reservation System', 'Hospital Management System', 'Course Enrollment System'],
+    intermediate: ['Login & Registration System', 'E-commerce Backend (Cart + Orders)', 'Student Result Management System', 'Employee Database Management', 'Online Voting System', 'Expense Tracker', 'Bug Tracking System', 'Leave Management System', 'Job Application System', 'Customer Relationship Management (CRM)'],
+    advanced: ['Online Banking System', 'E-learning Platform', 'Online Food Ordering System', 'Job Portal Website', 'Online Auction System', 'Travel Booking System', 'Online Exam System', 'Event Management System', 'Online Ticket Booking System', 'Blogging Website', 'REST API for E-commerce', 'Food Delivery Backend System', 'URL Shortener Service', 'Online Code Compiler', 'Social Media Backend', 'Job Portal Full Stack', 'Online Learning Platform', 'Ride Booking App (Uber Clone Logic)', 'Healthcare Appointment System', 'CRM Full Stack System', 'Inventory + Billing System', 'Multi-user Chat App', 'Project Management Tool']
+  },
+  mern: {
+    label: 'MERN / Node', icon: '🟢', domain: 'web',
+    stackHint: { basic: 'MERN stack (MongoDB, Express, React, Node) — minimal', intermediate: 'MERN stack', advanced: 'MERN stack, production-grade' },
+    basic: ['To-Do App (CRUD + MongoDB)', 'Notes App with Login', 'Contact Manager', 'Simple Blog App', 'URL Shortener (basic)', 'Task Tracker', 'Bookmark Manager', 'Expense Tracker', 'Recipe App', 'Portfolio with Admin Panel'],
+    intermediate: ['E-commerce Website (Cart + Orders)', 'Job Portal System', 'Online Quiz App (Timer + Score)', 'Chat Application (Socket.io)', 'Event Booking System', 'Online Voting System', 'Learning Management System', 'Social Media App (basic features)', 'Issue/Bug Tracker', 'Fitness Tracker'],
+    advanced: ['Full E-commerce (Payments + Admin Panel)', 'Real-time Chat App (like WhatsApp)', 'Video Streaming Platform (YouTube clone)', 'Ride Booking App (Uber clone logic)', 'Food Delivery App', 'Online Code Editor (with execution API)', 'Project Management Tool (like Trello)', 'Multi-user Blogging Platform', 'CRM System', 'SaaS Subscription Platform', 'AI-based Resume Analyzer', 'Freelancing Marketplace (like Fiverr)', 'Real-time Collaboration Tool (Google Docs clone)', 'Multi-vendor Marketplace', 'HR Management System', 'School/College ERP System']
+  },
+  aiml: {
+    label: 'AI / ML', icon: '🤖', domain: 'ml',
+    stackHint: { basic: 'Python + scikit-learn', intermediate: 'Python + scikit-learn/XGBoost', advanced: 'Python + deep learning (PyTorch/TensorFlow)' },
+    basic: ['House Price Prediction', 'Student Performance Prediction', 'Spam Email Detection', 'Iris Flower Classification', 'Titanic Survival Prediction', 'Salary Prediction Model', 'Movie Recommendation System (basic)', 'Handwritten Digit Recognition', 'Customer Segmentation (K-Means)', 'Loan Approval Prediction'],
+    intermediate: ['Credit Card Fraud Detection', 'Fake News Detection', 'Sentiment Analysis (Twitter/Reviews)', 'Stock Price Prediction', 'Disease Prediction System', 'Resume Screening System', 'Sales Forecasting', 'Chatbot (rule-based + ML)', 'Traffic Sign Recognition', 'Image Classification System'],
+    advanced: ['Face Recognition System', 'Object Detection (YOLO/SSD)', 'Voice Assistant (Speech Recognition)', 'AI Chatbot (NLP-based)', 'Recommendation System (Collaborative Filtering)', 'Text Summarization System', 'Emotion Detection (text/face)', 'Fraud Detection with Deep Learning', 'Time Series Forecasting (Advanced)', 'AI Resume Analyzer', 'Smart Interview Bot', 'Medical Image Diagnosis (X-ray analysis)', 'AI-powered Document Search Engine', 'Face Recognition Attendance System']
+  },
+  python: {
+    label: 'Python', icon: '🐍', domain: 'web',
+    stackHint: { basic: 'core Python (OOP, file handling)', intermediate: 'Python with automation/data libraries', advanced: 'Python full-stack (Flask/Django + REST API)' },
+    basic: ['Student Management System', 'Library Management System', 'Bank Management System', 'ATM Simulation', 'Inventory Management System', 'Employee Payroll System', 'Quiz Application (CLI/GUI)', 'Contact Book', 'Password Manager (basic encryption)', 'File Organizer (auto-sort files)'],
+    intermediate: ['Web Scraper (jobs/news/products)', 'Email Automation Script', 'PDF Merger/Splitter Tool', 'Image Resizer Tool', 'Log Analyzer', 'Expense Tracker (CLI/GUI)', 'Chat Application (socket programming)', 'URL Shortener', 'Weather App (API-based)', 'Data Analysis Dashboard (Pandas + Matplotlib)', 'Interactive Dashboard (Streamlit)'],
+    advanced: ['Blog Website (Flask/Django)', 'E-commerce Backend', 'Job Portal Backend', 'REST API (Flask/FastAPI)', 'Authentication System (JWT/Login)', 'AI Chatbot (Python + NLP)', 'Face Recognition System', 'Recommendation System', 'Fraud Detection System', 'Voice Assistant', 'Automation Bot (LinkedIn/WhatsApp tasks)', 'Full Stack Python App (Django + React)']
+  },
+  django: {
+    label: 'Django', icon: '🎯', domain: 'web',
+    stackHint: { basic: 'Django (function-based views, SQLite)', intermediate: 'Django + DRF', advanced: 'Django REST Framework, production-grade' },
+    basic: ['Blog Website', 'To-Do List App', 'Notes App', 'Contact Manager', 'Personal Portfolio with Admin Panel', 'Student Management System', 'Library Management System', 'Basic E-commerce (product listing)', 'Feedback/Survey Form App', 'Authentication System (Login/Register)'],
+    intermediate: ['Full E-commerce Website (Cart + Orders)', 'Job Portal System', 'Online Quiz/Exam System', 'Event Management System', 'Hotel Booking System', 'Food Ordering System', 'Blogging Platform (multi-user)', 'Expense Tracker', 'Learning Management System', 'CRM (Customer Management System)'],
+    advanced: ['REST API using Django REST Framework', 'Social Media Application', 'Real-time Chat App (Django Channels)', 'Online Auction System', 'Project Management Tool (like Trello)', 'Online Ticket Booking System', 'Multi-vendor Marketplace', 'Subscription-based SaaS Platform', 'Online Voting System', 'AI-powered Blog (auto content suggestions)', 'Resume Analyzer Web App', 'Healthcare Appointment System', 'Banking System Web App', 'School/College ERP System']
+  },
+  sql: {
+    label: 'SQL', icon: '🗄️', domain: 'dataanalysis',
+    stackHint: { basic: 'SQL (schema design + queries)', intermediate: 'SQL (joins, aggregations)', advanced: 'SQL (advanced analytics, data warehousing)' },
+    basic: ['Student Database System', 'Employee Database', 'Library Management Database', 'Product Inventory Database', 'Hospital Records System', 'School Management Database', 'Banking Transactions Table Design', 'Movie Database (actors, ratings)', 'Hotel Booking Records', 'Contact Management System'],
+    intermediate: ['E-commerce Orders Database', 'Customer Segmentation Queries', 'Food Delivery Database', 'Social Media Database', 'Ride Booking Database', 'Event Management Database'],
+    advanced: ['Banking System Database (transactions, accounts)', 'Airline Reservation System', 'Logistics & Supply Chain Database', 'CRM Database Design', 'Healthcare Management System', 'Subscription Billing System', 'Sales Dashboard (SQL + Power BI/Tableau)', 'Customer Lifetime Value Analysis', 'Marketing Campaign Analysis', 'Financial Risk Analysis', 'E-commerce Funnel Analysis', 'HR Management Database', 'Banking Data Warehouse']
+  },
+  powerbi: {
+    label: 'Power BI', icon: '📊', domain: 'dataanalysis',
+    stackHint: { basic: 'Power BI (basic dashboard)', intermediate: 'Power BI (DAX, multiple sources)', advanced: 'Power BI (advanced DAX, enterprise data model)' },
+    basic: ['Sales Dashboard', 'Student Performance Dashboard', 'Employee Attendance Dashboard', 'Expense Tracker Dashboard', 'Supermarket Sales Report', 'HR Overview Dashboard', 'Personal Finance Dashboard', 'Website Traffic Dashboard'],
+    intermediate: ['E-commerce Sales Analysis', 'Customer Segmentation Dashboard', 'Marketing Campaign Analysis', 'Product Performance Dashboard', 'Financial Analysis Dashboard', 'Loan Analysis Dashboard', 'Call Center Performance Dashboard', 'Supply Chain Dashboard', 'Hospital Management Dashboard'],
+    advanced: ['Profit & Loss Dashboard', 'Customer Churn Analysis', 'Sales Forecast Dashboard', 'Fraud Detection Dashboard', 'Banking Performance Dashboard', 'KPI Executive Dashboard', 'Multi-page Business Dashboard', 'Employee Attrition Analysis', 'Marketing ROI Dashboard', 'Stock Market Dashboard', 'Data Warehouse Dashboard (SQL + Power BI)', 'CRM Analytics Dashboard', 'Global Sales Dashboard']
+  }
+};
+
+let _ideaPickerCategory = 'java';
+
+function openIdeaPicker() {
+  const overlay = document.getElementById('idea-picker-overlay');
+  if (!overlay) return;
+  renderIdeaPickerTabs();
+  renderIdeaPickerLevels();
+  renderIdeaPickerList();
+  overlay.style.display = 'flex';
+}
+
+function closeIdeaPicker() {
+  const overlay = document.getElementById('idea-picker-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function renderIdeaPickerTabs() {
+  const el = document.getElementById('idea-picker-tabs');
+  if (!el) return;
+  el.innerHTML = Object.keys(PROJECT_IDEA_CATEGORIES).map(key => {
+    const cat = PROJECT_IDEA_CATEGORIES[key];
+    return `<button type="button" class="idea-tab${key === _ideaPickerCategory ? ' active' : ''}" onclick="selectIdeaCategory('${key}')">${cat.icon} ${cat.label}</button>`;
+  }).join('');
+}
+
+function selectIdeaCategory(key) {
+  if (!PROJECT_IDEA_CATEGORIES[key]) return;
+  _ideaPickerCategory = key;
+  renderIdeaPickerTabs();
+  renderIdeaPickerList();
+}
+
+function renderIdeaPickerLevels() {
+  const el = document.getElementById('idea-picker-levels');
+  if (!el) return;
+  el.innerHTML = Object.keys(LEVELS).map(key => {
+    const lvl = LEVELS[key];
+    return `<button type="button" class="idea-level-tab${key === currentLevel ? ' active' : ''}" onclick="selectLevel('${key}'); renderIdeaPickerList();">${lvl.icon} ${lvl.label}</button>`;
+  }).join('');
+}
+
+function renderIdeaPickerList() {
+  const el = document.getElementById('idea-picker-list');
+  if (!el) return;
+  const cat = PROJECT_IDEA_CATEGORIES[_ideaPickerCategory];
+  const ideas = cat[currentLevel] || [];
+  el.innerHTML = ideas.map((name, i) =>
+    `<button type="button" class="idea-chip" data-idea-idx="${i}">${escapeHtml(name)}</button>`
+  ).join('');
+  el.querySelectorAll('.idea-chip').forEach((btn, i) => {
+    btn.addEventListener('click', () => pickIdea(_ideaPickerCategory, ideas[i]));
+  });
+}
+
+function pickIdea(categoryKey, ideaName) {
+  const cat = PROJECT_IDEA_CATEGORIES[categoryKey];
+  if (!cat) return;
+  selectDomain(cat.domain);
+  const hint = cat.stackHint[currentLevel] || '';
+  const ta = document.getElementById('idea-input');
+  ta.value = `${ideaName} — ${hint}`;
+  document.getElementById('char-count').textContent = ta.value.length;
+  closeIdeaPicker();
+  ta.focus();
+  ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ═══════════════════════════════════════════════════════════
 //  STAGE 1 — EXPAND any idea (even a one-liner) into a full brief
 // ═══════════════════════════════════════════════════════════
 // Heuristic: is the user's idea too thin to produce a precise PRD?
@@ -2450,6 +2814,7 @@ function isVagueIdea(idea) {
 
 function buildExpandPrompt(rawIdea) {
   const d = getDomain(currentDomainId);
+  const lvl = getLevel(currentLevel);
   const stackLines = d.stackFields.map(f => `  "${f.key}": "${f.desc}"`).join(',\n');
   return `A user gave you a ${d.label} project idea. It might be a single vague sentence, a typo-filled one-liner, or a detailed paragraph. Expand it into a complete, specific project brief.
 
@@ -2457,6 +2822,8 @@ USER INPUT: "${rawIdea}"
 PROJECT DOMAIN: ${d.label}
 
 ${d.expandHint}
+
+${lvl.expandGuidance}
 
 Infer everything that's missing and be specific with versions/tools. When the input is vague, make concrete, sensible choices for the stated domain (do NOT leave anything generic) and RECORD each significant assumption you made in the "assumptions" array so the user can correct it. Anchor the project to a recognizable real-world reference when helpful (e.g. "like Swiggy/DoorDash"). Keep assumptions short ("Assumed Stripe for payments", "Assumed ~10k daily users").
 
@@ -2650,6 +3017,7 @@ function enforceStackConsistency(brief) {
 
 function buildWebPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lvl = getLevel(brief.level);
   const stack = inferWebStack(brief);
   // ── Feature detection (PRECISE) ──
   // Only scan the structured fields (otherTools + coreFeatures), never the free-text
@@ -2712,6 +3080,7 @@ ${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, o
 ${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
 ${/cloudinary/i.test(brief.otherTools || '') ? `- Cloudinary MUST appear in: image URL columns in schema, upload endpoint, CLOUDINARY_* env vars.` : ''}
 ${/sendgrid/i.test(brief.otherTools || '') ? `- SendGrid MUST appear in: email row in backend table, SENDGRID_API_KEY env var, order-confirmation email in business rules.` : ''}
+${lvl.promptBlock(lvl.audience)}
 
 Write a professional PRD in Markdown. Specification prose + tables only. No code implementations. No function bodies.
 
@@ -2951,6 +3320,7 @@ ${extras}
 // ═══════════════════════════════════════════════════════════
 function buildMLPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lvl = getLevel(brief.level);
   const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
   return `PROJECT: ${brief.projectName} (${brief.appType})
 STACK: ${g('language','Python')} + ${g('mlFramework')} | Data: ${g('dataStore')} | Tracking: ${g('experiment')} | Serving: ${g('serving')} | Compute: ${g('compute')}
@@ -2961,6 +3331,7 @@ CAPABILITIES: ${(brief.coreFeatures||[]).join(' | ')}
 NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
 OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
 DATE: ${today}
+${lvl.promptBlock(lvl.audience)}
 
 Write a professional ML/AI Product Requirements Document in Markdown. Specification prose + tables only. No full training loops, no model class bodies, no notebook dumps.
 
@@ -3080,6 +3451,7 @@ Phase 1 Data & validation · Phase 2 Baseline model · Phase 3 Feature pipeline 
 // ═══════════════════════════════════════════════════════════
 function buildDataSciPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lvl = getLevel(brief.level);
   const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
   return `PROJECT: ${brief.projectName} (${brief.appType})
 STACK: ${g('language','Python')} | Libraries: ${g('libraries')} | Data: ${g('dataSource')} | Env: ${g('notebook')} | Viz: ${g('viz')} | Compute: ${g('compute')}
@@ -3090,6 +3462,7 @@ DELIVERABLES: ${(brief.coreFeatures||[]).join(' | ')}
 NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
 OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
 DATE: ${today}
+${lvl.promptBlock(lvl.audience)}
 
 Write a professional Data Science Product Requirements Document in Markdown. This is RESEARCH/ANALYSIS work — focus on questions, data understanding, statistics, modeling, and interpreting results. Specification prose + tables only. No long scripts or notebook dumps; small formula/snippet references are fine.
 
@@ -3184,6 +3557,7 @@ Phase 1 Data load & validation · Phase 2 EDA · Phase 3 Cleaning/prep · Phase 
 // ═══════════════════════════════════════════════════════════
 function buildDataAnalysisPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lvl = getLevel(brief.level);
   const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
   return `PROJECT: ${brief.projectName} (${brief.appType})
 STACK: ${g('language','SQL')} | Data: ${g('dataSource')} | Prep: ${g('transform')} | BI: ${g('bi')}
@@ -3194,6 +3568,7 @@ DELIVERABLES: ${(brief.coreFeatures||[]).join(' | ')}
 NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
 OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
 DATE: ${today}
+${lvl.promptBlock(lvl.audience)}
 
 Write a professional Data Analysis / BI Product Requirements Document in Markdown. This is ANALYST / REPORTING work — focus on business questions, metrics, SQL/transformations, dashboards, and insights. Specification prose + tables only. SQL queries (as the analysis spec) are allowed; no long application code.
 
@@ -3276,6 +3651,7 @@ Phase 1 Connect sources · Phase 2 Metric definitions · Phase 3 Prep queries ·
 // ═══════════════════════════════════════════════════════════
 function buildSecurityPrompt(brief) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lvl = getLevel(brief.level);
   const g = (k, d) => (brief[k] && brief[k] !== 'None') ? brief[k] : (d || '');
   return `PROJECT: ${brief.projectName} (${brief.appType})
 SYSTEM UNDER PROTECTION: ${g('targetSystem')}
@@ -3288,6 +3664,7 @@ CAPABILITIES: ${(brief.coreFeatures||[]).join(' | ')}
 NICE-TO-HAVE: ${(brief.niceToHave||[]).join(' | ')}
 OUT OF SCOPE: ${(brief.outOfScope||[]).join(' | ')}
 DATE: ${today}
+${lvl.promptBlock(lvl.audience)}
 
 Write a professional Cybersecurity Product Requirements Document in Markdown. Specification prose + tables only. Config snippets and command references are allowed; NEVER include working exploit/attack code or payloads.
 
@@ -4060,6 +4437,10 @@ function renderBriefCard(brief) {
         <span class="brief-value"><strong>${brief.projectName}</strong> &nbsp;·&nbsp; ${brief.appType}</span>
       </div>
       <div class="brief-row">
+        <span class="brief-label">Complexity Level</span>
+        <span class="brief-value">${getLevel(brief.level).icon} ${getLevel(brief.level).label} <span class="level-pill-tag">${getLevel(brief.level).id === 'basic' ? 'Beginner / Student' : getLevel(brief.level).id === 'intermediate' ? 'Portfolio' : 'Production'}</span></span>
+      </div>
+      <div class="brief-row">
         <span class="brief-label">What it does</span>
         <span class="brief-value">${brief.oneLiner}</span>
       </div>
@@ -4180,6 +4561,7 @@ async function generatePRD() {
     }
 
     brief.domain = currentDomainId;
+    brief.level = currentLevel;
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);
     brief = enforced.brief;
@@ -4216,6 +4598,20 @@ function domainSystemExtra(d) {
     default:
       return common;
   }
+}
+
+// Complexity-level addendum appended to the base system prompt — reinforces
+// the same scaling instructions already embedded in the user prompt so the
+// model can't drift back to enterprise-default depth for a Basic/Intermediate ask.
+function levelSystemExtra(level) {
+  const lvl = getLevel(level);
+  if (lvl.id === 'basic') {
+    return `\n\nCOMPLEXITY LEVEL = BASIC. Write for ${lvl.audience}. Keep the entire document proportionate to a small, achievable first project: fewer table rows, the simplest viable stack, no infrastructure the stated features don't require, and plain language with jargon explained on first use. Do not default back to enterprise-scale depth.`;
+  }
+  if (lvl.id === 'intermediate') {
+    return `\n\nCOMPLEXITY LEVEL = INTERMEDIATE. Write for ${lvl.audience}. Solid real-world depth without enterprise over-engineering — only add caching/queues/real-time layers the stated features genuinely need.`;
+  }
+  return `\n\nCOMPLEXITY LEVEL = ADVANCED. Write for ${lvl.audience}. Use the full production-grade depth already implied by the section instructions.`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5126,6 +5522,16 @@ function setVerifyBadge(result) {
   el.style.display = 'inline-flex';
 }
 
+// Shows which complexity level (Basic/Intermediate/Advanced) this PRD was written for.
+function setLevelBadge(levelId) {
+  const el = document.getElementById('level-badge');
+  if (!el) return;
+  const lvl = getLevel(levelId);
+  el.textContent = `${lvl.icon} ${lvl.label}`;
+  el.title = `Generated for: ${lvl.audience}`;
+  el.style.display = 'inline-flex';
+}
+
 // ═══════════════════════════════════════════════════════════
 //  CONFIRM & GENERATE — Stage 2 (user confirmed stack → full PRD)
 // ═══════════════════════════════════════════════════════════
@@ -5169,6 +5575,8 @@ async function confirmAndGenerate() {
   document.getElementById('error-msg').style.display = 'none';
   const vb = document.getElementById('verify-badge');
   if (vb) vb.style.display = 'none';
+  const lb = document.getElementById('level-badge');
+  if (lb) lb.style.display = 'none';
   rawMarkdown = '';
   _lastVerify = null;
   resetRateLimitSession();
@@ -5266,7 +5674,7 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
 - Use concrete, realistic numbers, not vague adjectives: name actual library versions, p95 latency targets in ms, rate limits, token TTLs, table row estimates, cache TTLs. If the user's input is vague, choose sensible defaults for the stated domain and state them explicitly — never write "TBD" or hand-wave.
 - Business logic, edge cases, and error states must be specific to the described product, not boilerplate that could apply to any app.`;
 
-    const fullSystemPrompt = prdSystemPrompt + domainSystemExtra(_dom);
+    const fullSystemPrompt = prdSystemPrompt + domainSystemExtra(_dom) + levelSystemExtra(brief.level);
     const stage2 = await generateFullPRD(fullSystemPrompt, prdUserPrompt, brief, (part) => {
       setProgress(85 + part * 2, `📝 Completing PRD (continuation ${part})…`, 'Finishing remaining sections…');
     });
@@ -5304,6 +5712,7 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
       document.getElementById('brief-card').style.display = 'none';
       renderPRD(rawMarkdown);
       setVerifyBadge(verify);
+      setLevelBadge(brief.level);
     }, 700);
 
   } catch (err) {

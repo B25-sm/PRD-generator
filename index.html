@@ -2171,10 +2171,11 @@ const GROQ_LIMITS = {
 // A per-minute (TPM) limit ALWAYS clears within one 60-second window. So if cumulative
 // back-to-back 429 waits — with zero successful calls in between — exceed one full
 // window, the block is NOT the per-minute limit; it's the daily token/request cap.
-// We then stop early with a clear, actionable message instead of grinding all the way
-// to the 18-minute cumulative backstop (which is what made it feel like it hung forever).
-const EARLY_DAILY_CAP_WAIT_SEC = 80;  // one 60s window + margin of dedicated waiting
-const EARLY_DAILY_CAP_PAUSES   = 6;   // secondary guard for very short retry-after values
+// We then stop early with a clear, actionable message instead of grinding for minutes
+// on a model that's genuinely daily-capped (previously this could stack up to ~10-15
+// min across the model fallback chain, which just felt like it had hung).
+const EARLY_DAILY_CAP_WAIT_SEC = 60;  // one 60s window of dedicated waiting, no more
+const EARLY_DAILY_CAP_PAUSES   = 4;   // secondary guard for very short retry-after values
 
 const STORAGE_KEY_API      = 'prd_groq_key';
 const STORAGE_KEY_RATE     = 'prd_rate_log';       // timestamps of PRD completions
@@ -3942,8 +3943,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     let serverWaitSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : NaN;
     if (!serverWaitSec || isNaN(serverWaitSec)) serverWaitSec = parseGroqRetrySeconds(msg);
 
-    const MAX_AUTO_WAIT_SEC  = 15 * 60; // wait out a single pause up to 15 min (animated)
-    const MAX_TOTAL_AUTO_SEC = 18 * 60; // ultimate cumulative backstop across pauses
+    const MAX_AUTO_WAIT_SEC  = 100;      // wait out a single pause up to ~100s (animated)
+    const MAX_TOTAL_AUTO_SEC = 150;      // ultimate cumulative backstop across pauses (~2.5 min)
 
     // Truly long (hours-scale) → real daily cap with a known reset time → try the
     // next model in the chain before giving up entirely.
@@ -3954,8 +3955,8 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     // Early daily-cap detection: a per-minute (TPM) limit ALWAYS clears within one 60s
     // window, so once we've spent a full window of dedicated back-to-back waiting with
     // zero successful calls in between, waiting can't be the cure — it's the daily cap.
-    // Switch models (or bail in ~90s with a helpful message once the chain is exhausted)
-    // instead of grinding to the 18-min backstop.
+    // Switch models (or bail in ~60s with a helpful message once the chain is exhausted)
+    // instead of grinding to the ~2.5-min backstop.
     if ((_rateLimitSession.streakWaitSec || 0) >= EARLY_DAILY_CAP_WAIT_SEC ||
         (_rateLimitSession.streakPauses  || 0) >= EARLY_DAILY_CAP_PAUSES) {
       return fallbackOrThrow({ chain, model, systemPrompt, userPrompt, maxTokens, temperature });

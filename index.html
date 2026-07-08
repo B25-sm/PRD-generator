@@ -2549,7 +2549,9 @@ const DOMAINS = {
       { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)'", placeholder: 'e.g. Vercel + Render + Supabase' },
       { key: 'otherTools', label: 'Other Tools', cat: null,       desc: 'Other tools like Redis, Stripe, SendGrid, Cloudinary (or "None")', placeholder: 'e.g. Stripe, Redis, Cloudinary' }
     ],
-    expandHint: `Infer a sensible, INTERNALLY CONSISTENT web stack. CRITICAL STACK RULES:
+    expandHint: `CONSOLE/CLI DETECTION — CHECK THIS FIRST: if the user's input explicitly describes a plain console/CLI/desktop program with NO web frontend (e.g. says "console app", "CLI", "plain Java"/"plain Python", "OOP, collections", "OOP, file handling", or otherwise clearly wants a single local program rather than a client-server web app), do NOT invent a web stack. Instead set EXACTLY: frontend = "None (console application)", backend = "<language> (plain, console-based, no framework)" matching the stated language, database = "File-based storage (e.g. serialized objects or a CSV/JSON file)" (or "In-memory collections only" if no persistence is implied), auth = "None (single local user)", hosting = "N/A — runs locally, no hosting needed", otherTools = "None". coreFeatures must be the actual menu operations (e.g. "Add book", "Search by ISBN", "List all books", "Remove a book", "Save/load data to file") — NOT web-app features like "user registration" or "REST API".
+
+Otherwise, infer a sensible, INTERNALLY CONSISTENT web stack. CRITICAL STACK RULES:
 - Auth MUST match backend runtime: Spring Boot → "JWT + Spring Security"; Node/Express → "JWT + Passport.js"; Django → "JWT + Django REST Framework auth"; Next.js + Node backend → "NextAuth.js + JWT" (NextAuth is frontend-only, backend still issues JWT).
 - NEVER pair NextAuth or Passport.js with a Spring Boot or Django backend.
 - ORM must match backend: Spring → JPA/Hibernate; Node → Prisma; Django → Django ORM.
@@ -2964,6 +2966,14 @@ function inferWebStack(brief) {
   const fe = (brief.frontend || '').toLowerCase();
   const tools = ((brief.otherTools || '') + ' ' + be).toLowerCase();
 
+  // A plain console/CLI backend (see buildWebPrompt's isConsole) has no framework, ORM,
+  // or REST layer at all — check this BEFORE the "java"/"python" substring checks below,
+  // which would otherwise wrongly infer Spring Boot / Django for a bare console app.
+  if (/console/.test(fe)) {
+    const lang = /java/.test(be) ? 'Java' : /c\+\+/.test(be) ? 'C++' : /c#/.test(be) ? 'C#' : /python/.test(be) ? 'Python' : /ruby/.test(be) ? 'Ruby' : (brief.backend || 'the stated language').split(/[\s(]/)[0] || 'the stated language';
+    return { lang, framework: 'None (plain console app, no framework)', orm: 'None (file-based persistence, no ORM)', rest: 'N/A (no REST API, no network layer)', concepts: 'OOP classes, collections/data structures, file I/O, main() program loop' };
+  }
+
   const pickOrm = (defaults) => {
     if (/prisma/i.test(tools)) return 'Prisma';
     if (/sequelize/i.test(tools)) return 'Sequelize';
@@ -3026,6 +3036,10 @@ function inferSqlDialect(database) {
 function enforceStackConsistency(brief) {
   const fixes = [];
   const b = { ...brief };
+  // A plain console/CLI app has no web framework, ORM, or network auth — none of the
+  // web-stack auto-corrections below apply, and "java"/"python" substring matches would
+  // otherwise wrongly force e.g. auth back to "JWT + Spring Security" for a console app.
+  if (/console/i.test(b.frontend || '')) { b._stackFixes = fixes; return { brief: b, fixes }; }
   const be = (b.backend || '').toLowerCase();
   const fe = (b.frontend || '').toLowerCase();
   const auth = (b.auth || '').toLowerCase();
@@ -3132,6 +3146,10 @@ function buildWebPrompt(brief) {
   const dbHost = brief.database || 'Managed PostgreSQL';
 
   const isNext = /next\.js|nextjs|\bnext\b/i.test(brief.frontend || '');
+  // A plain console/CLI project (see the web-domain expandHint's CONSOLE/CLI DETECTION
+  // rule) has no network layer at all — Frontend/API/Auth/Deployment/State Management
+  // sections below all branch on this instead of assuming a client-server web app.
+  const isConsole = /console/i.test(brief.frontend || '');
   const featAll  = ((brief.coreFeatures || []).join(' ') + ' ' + brief.projectName + ' ' + (brief.oneLiner || '')).toLowerCase();
   const isFood   = /food|restaurant|menu|delivery|meal|order hub/.test(featAll);
   const isEcom   = /e-?commerce|marketplace|shop|cart|checkout|product|store/.test(featAll);
@@ -3146,7 +3164,8 @@ function buildWebPrompt(brief) {
   // "no refresh rotation / no multi-role RBAC" instructions, since a concrete example
   // this late in the prompt tends to win over an abstract rule stated earlier.
   const permissionRows = ['Anonymous', 'Authenticated', hasOwnerRole ? 'Owner' : null, (lvl.id !== 'basic' || hasAdminRole) ? 'Staff/Admin' : null].filter(Boolean);
-  const authSection = lvl.id === 'basic' ? `### Auth Lifecycle
+  const hasLoginFeature = /\blogin\b|\bpassword\b|multi-user|multi user/i.test(featAll);
+  const authSection = isConsole ? `N/A — single local user running the program directly; there is no network, so no token/session-based auth applies.${hasLoginFeature ? ' Since the idea implies a login step, describe it as a simple username/password check against a local file at startup — no tokens, sessions, cookies, or network auth of any kind.' : ''}` : lvl.id === 'basic' ? `### Auth Lifecycle
 Numbered steps: register → login → token issued → request with token → token expires → re-login. ONE token only (a session cookie or a single non-rotating JWT) — no refresh-token flow, no email verification step.
 ### Token Strategy
 | Property | Value | Rationale |
@@ -3210,15 +3229,15 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - Frontend is ${brief.frontend}; backend is ${brief.backend}. Do NOT mix Spring/Java concepts into a Node stack or vice versa.
 - Every Tech Stack table row, architecture section, folder tree, and security note MUST reflect this stack only.
 - Auth (backend table + Section 8): "${brief.auth}" exactly — NEVER list NextAuth/Passport in the backend table for Spring Boot; NextAuth is frontend-only on Next.js.
-- Architecture: MONOLITH — one ${stack.framework} API + separate ${brief.frontend} frontend deployed independently. Do NOT describe as "microservices" unless the user explicitly requested microservices.
+- Architecture: ${isConsole ? 'SINGLE-PROCESS CONSOLE APP — one local program, no client/server split, no API, no separate frontend. Do NOT describe a frontend/backend split, hosting, or deployment architecture anywhere in this document.' : `MONOLITH — one ${stack.framework} API + separate ${brief.frontend} frontend deployed independently. Do NOT describe as "microservices" unless the user explicitly requested microservices.`}
 - Production Architecture diagram database MUST be "${dbHost}" — do not substitute Supabase/other unless the database field says so.
 - "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
 - State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
 - NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
-- DATABASE DIALECT — NON-NEGOTIABLE: the database is ${dialect.dialectName}. ${dialect.kind === 'mongo'
+${isConsole ? `- NO DATABASE: this is a local console app with file-based persistence, not a real database — never mention PostgreSQL/MySQL/MongoDB/SQL of any kind anywhere in this document.` : `- DATABASE DIALECT — NON-NEGOTIABLE: the database is ${dialect.dialectName}. ${dialect.kind === 'mongo'
     ? 'Section 6 MUST use Mongoose/MongoDB document schema (fields, types, refs, indexes) — NEVER SQL CREATE TABLE syntax.'
     : `Section 6's DDL MUST use ${dialect.dialectName}-valid syntax ONLY: primary keys as ${dialect.pkType}, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}. NEVER use another dialect's syntax (e.g. no BIGSERIAL/TIMESTAMP WITH TIME ZONE unless the database is genuinely PostgreSQL; no AUTO_INCREMENT/DATETIME unless it's genuinely MySQL/MariaDB).`}
-  Section 13's Docker Compose and Section 15's DATABASE_URL/connection string MUST match this same dialect (${dialect.dockerImage ? `db image "${dialect.dockerImage}"` : 'no separate db container — mount the file-based database as a volume'}, scheme "${dialect.connScheme}") — never default to Postgres for a non-Postgres database.
+  Section 13's Docker Compose and Section 15's DATABASE_URL/connection string MUST match this same dialect (${dialect.dockerImage ? `db image "${dialect.dockerImage}"` : 'no separate db container — mount the file-based database as a volume'}, scheme "${dialect.connScheme}") — never default to Postgres for a non-Postgres database.`}
 - FIELD NAME CONSISTENCY: a column/field referring to the same concept (e.g. a product reference inside order_items) MUST use the IDENTICAL name in the Database Schema, API request fields, and Business Rules — pick one name (e.g. product_id) and never rename it between sections (e.g. item_id in the schema vs product_id in the API).
 - OWNERSHIP CONSISTENCY: if Section 8's Permission Model defines an "Owner" role for a resource (e.g. products, posts), Section 6's schema for that resource MUST include the user-reference FK that makes ownership checkable (e.g. seller_id, author_id, owner_id) — never grant an Owner permission the schema can't actually enforce.
 - FEATURE COVERAGE: every item in FEATURES above must show up as concrete schema tables, API endpoints, or UI routes — never silently drop a stated feature. If a feature implies a multi-step workflow (e.g. "cart management" implies add-to-cart THEN checkout, not a single-step purchase), the schema and API must support that actual workflow.
@@ -3244,16 +3263,24 @@ ${lvl.id === 'basic' ? '### What You\'ll Practice\n4-6 concrete skills/concepts 
 ## 2. Tech Stack Overview
 ### Backend
 | Layer | Technology | Version | Purpose | Why Chosen |
-(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)
+${isConsole ? `(3-5 rows for a plain ${stack.lang} console app: language, core collections/data structures used, file I/O approach for persistence, build tool. NO framework, ORM, REST layer, auth, or hosting rows — none of those exist in a local console program.)` : `(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)`}
 ### Frontend
-| Layer | Technology | Version | Purpose | Why Chosen |
-(8+ rows: language, framework, build tool, router, state, styling, forms, HTTP client, testing)
+${isConsole ? `N/A — no separate frontend/UI framework; all interaction happens through the terminal. State this in one sentence instead of a table.` : `| Layer | Technology | Version | Purpose | Why Chosen |
+(8+ rows: language, framework, build tool, router, state, styling, forms, HTTP client, testing)`}
 ### Infrastructure
-| Service | Technology | Purpose |
-(containerization, CI/CD, backend host, frontend host, proxy, monitoring)
+${isConsole ? `N/A — a local console application needs no containerization, CI/CD, hosting, or monitoring. State this in one sentence instead of a table.` : `| Service | Technology | Purpose |
+(containerization, CI/CD, backend host, frontend host, proxy, monitoring)`}
 
 ## 3. System Architecture
-Monolith architecture: single ${stack.framework} backend API + ${brief.frontend} frontend (separate deployment, NOT microservices). 2-sentence rationale.
+${isConsole ? `Single-process console application: one ${stack.lang} program reads input from the terminal, operates on in-memory data structures, and persists them to a local file. 2-sentence rationale — no client/server split, no network layer, no microservices.
+\`\`\`
+ASCII flow diagram: User (terminal input) → Console Menu Loop → In-Memory Data ↔ Local File Storage → Terminal Output
+\`\`\`
+### Request Flow — Console Interaction
+Numbered steps 1–6: program starts → menu displayed → user selects an option → input collected and validated → operation performed on in-memory data (persisted to file as needed) → result printed, loop back to menu.
+### Key Design Decisions
+| Decision | Choice | Rationale | Trade-off |
+(2-3 rows relevant to a console app: choice of in-memory data structure, file format for persistence, when data is saved — NOT web/microservices decisions.)` : `Monolith architecture: single ${stack.framework} backend API + ${brief.frontend} frontend (separate deployment, NOT microservices). 2-sentence rationale.
 \`\`\`
 ASCII component diagram: Browser → Proxy → API → DB${hasCache ? ' ↔ Cache' : ''}${hasTasks ? ' + Workers' : ''}${hasRealtime ? ' + WS' : ''}
 \`\`\`
@@ -3262,21 +3289,25 @@ Numbered steps 1–8: user action → DB → response rendered.
 ${hasRealtime ? '### Request Flow — WebSocket\nNumbered steps 1–5: connect → message → broadcast.' : ''}
 ### Key Design Decisions
 | Decision | Choice | Rationale | Trade-off |
-(3–5 rows: JWT vs sessions, SQL vs NoSQL, monolith vs services, etc.)
+(3–5 rows: JWT vs sessions, SQL vs NoSQL, monolith vs services, etc.)`}
 
 ## 4. Backend Architecture
 ### Project Structure
 \`\`\`
-backend/ file tree — ONLY source files you author, each with a ← role comment. Show .idea/.vscode/target/build/.git as a single collapsed line (never expand them, never list Project_Default.xml/workspace.xml or numbered variants). Keep under ~35 lines.
+${isConsole ? 'src/ file tree — ONLY source files you author, each with a ← role comment. Keep under ~20 lines.' : 'backend/ file tree — ONLY source files you author, each with a ← role comment. Show .idea/.vscode/target/build/.git as a single collapsed line (never expand them, never list Project_Default.xml/workspace.xml or numbered variants). Keep under ~35 lines.'}
 \`\`\`
-### Framework Concepts Reference
+### ${isConsole ? 'OOP Concepts Reference' : 'Framework Concepts Reference'}
 | Concept | Definition | Role in ${brief.projectName} | Key File |
-(10+ rows for ${stack.framework}: ${stack.concepts}. Use ${stack.orm} terminology — NOT Spring/JPA/Hibernate unless backend is Spring Boot.)
+${isConsole ? `(4-6 rows: the classes/objects used, encapsulation, the main program loop, file I/O approach — NOT framework/ORM concepts, there is no framework.)` : `(10+ rows for ${stack.framework}: ${stack.concepts}. Use ${stack.orm} terminology — NOT Spring/JPA/Hibernate unless backend is Spring Boot.)`}
 ### Data Modeling Approach
-Entity design philosophy: naming conventions, relationship strategy (FK/M2M/embedded), soft-delete pattern.
+${isConsole ? 'Entity design philosophy: what fields each class holds, how entities reference each other in memory (e.g. a list of Loan objects each holding a reference to a Book and a Member), no FK/M2M/soft-delete concepts — those are database terms.' : 'Entity design philosophy: naming conventions, relationship strategy (FK/M2M/embedded), soft-delete pattern.'}
 
 ## 5. Frontend Architecture
-### Project Structure
+${isConsole ? `N/A — no separate frontend layer; describe the console UI instead.
+### Console Menu Flow
+Numbered menu structure: main menu options, any sub-menus, how the user navigates back, how the program exits.
+### Input Handling
+How user input is read, parsed, and validated (e.g. Scanner in Java, input() in Python) — invalid-input handling and re-prompting behavior.` : `### Project Structure
 \`\`\`
 src/ file tree — every folder with ← responsibility comment
 \`\`\`
@@ -3285,22 +3316,29 @@ src/ file tree — every folder with ← responsibility comment
 (all routes: public, authenticated, admin)
 ### State Architecture
 | State | Location | Library | Why Here |
-(auth tokens, user profile, server cache, form state, URL filters)
+(auth tokens, user profile, server cache, form state, URL filters)`}
 
 ## 6. Database Schema
-${dialect.kind === 'mongo' ? `\`\`\`javascript
+${isConsole ? `\`\`\`
+Describe the file-based persistence format (e.g. one line per record in a CSV/text file, Java object serialization, or Python JSON/pickle). For each entity: field name, type, and how it's delimited/parsed. This is NOT a real database — no CREATE TABLE, no Mongoose schema, no SQL of any kind.
+\`\`\`` : dialect.kind === 'mongo' ? `\`\`\`javascript
 Mongoose schema for every collection: field, type, required, unique, default, ref (for relationships), timestamps: true. NOT SQL — this project uses MongoDB, never CREATE TABLE.
 \`\`\`` : `\`\`\`sql
 Full CREATE TABLE DDL for every entity, in valid ${dialect.dialectName} syntax ONLY: primary keys as ${dialect.pkType}, VARCHAR(255), TEXT, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}, NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
 CRITICAL ORDERING: A table must be created AFTER every table it references with a FOREIGN KEY. Emit independent tables first, then dependent ones (dependency order), so the script runs top-to-bottom without errors.
 \`\`\``}
 ### Query Patterns
-One sentence per major access pattern: what's fetched, join strategy, why (e.g. select_related vs prefetch_related to avoid N+1).
+${isConsole ? `One sentence per major access pattern: how records are looked up/filtered/sorted in memory (e.g. linear search by ISBN, sort by title) — no joins, no DB queries.` : `One sentence per major access pattern: what's fetched, join strategy, why (e.g. select_related vs prefetch_related to avoid N+1).`}
 ### Data Integrity Rules
-Business rules enforced at DB layer: unique constraints, check constraints, cascade behavior.
+${isConsole ? `Rules enforced in code before saving (e.g. no duplicate ISBN, required fields non-empty) — there is no DB layer to enforce them.` : `Business rules enforced at DB layer: unique constraints, check constraints, cascade behavior.`}
 
 ## 7. API Specification
-Base URL: /api/v1/ | Auth: Bearer token | Pagination: page-number, default 20
+${isConsole ? `N/A — no network API; this is a single-process console application. Specify the Console Command/Menu Interface instead:
+### Menu Options
+| Option | Input Prompt | Action | Output |
+(one row per menu option/command — ALL of them, covering every stated feature)
+### Validation & Error Handling
+Per option: what invalid input looks like, how the program responds, whether it re-prompts or returns to the menu.` : `Base URL: /api/v1/ | Auth: Bearer token | Pagination: page-number, default 20
 ### Endpoints
 | Method | Endpoint | Auth | Request Fields | Response Shape | Description |
 (ALL endpoints, 14+ rows, grouped: Auth → Users → ${brief.coreFeatures[0] || 'Resources'} → …)
@@ -3313,13 +3351,18 @@ Detail: { "id": 1, "field": "value", "created_at": "2026-01-15T10:30:00Z" }
 404: { "detail": "Not found." }
 \`\`\`
 ### Business Rules Per Endpoint
-For each non-trivial endpoint: validation rules, permission checks, side effects (emails, notifications, cache busts).
+For each non-trivial endpoint: validation rules, permission checks, side effects (emails, notifications, cache busts).`}
 
 ## 8. Authentication & Authorization
 ${authSection}
 
 ## 9. State Management
-### Global Store Shape
+${isConsole ? `N/A — no frontend state management (no browser, no client). Describe the program's in-memory data structures instead:
+### In-Memory Data Structures
+| Data | Structure | Why This Structure |
+(one row per main entity, e.g. ArrayList<Book> or HashMap<String, Book> keyed by ISBN — justify the choice)
+### Persistence Strategy
+When data is loaded from file at startup and saved back to file (on every change vs. only on exit) — be explicit.` : `### Global Store Shape
 \`\`\`json
 { "auth": { "user": null, "accessToken": null, "isAuthenticated": false }, "ui": { "theme": "dark", "toasts": [] } }
 \`\`\`
@@ -3328,10 +3371,14 @@ ${authSection}
 (one row per main API resource)
 ### State Location Map
 | State | Location | Library | Reason |
-(auth, profile, server data, forms, URL params — 5+ rows)
+(auth, profile, server data, forms, URL params — 5+ rows)`}
 
 ## 10. Error Handling
-### Error Envelope
+${isConsole ? `### Exception Handling Strategy
+Where exceptions are caught (e.g. invalid input parsing, file I/O failures) and what the user sees on the console vs. what's logged — no HTTP status codes, no frontend layers.
+### Logging Levels
+| Level | What | Where | Retention |
+(2-3 rows relevant to a local console app, e.g. INFO for normal operations, ERROR for caught exceptions — printed to console or a local log file)` : `### Error Envelope
 \`\`\`json
 { "detail": "message", "code": "ERROR_CODE", "status_code": 400, "fields": {} }
 \`\`\`
@@ -3344,22 +3391,27 @@ Where exceptions are caught, what is logged vs returned, how PII is stripped fro
 | Level | What | Where | Retention |
 (DEBUG dev-only, INFO request lifecycle, WARNING rate limits, ERROR unhandled, CRITICAL security events)
 ### Frontend Error Layers
-Global ErrorBoundary → API interceptor (401 refresh, 500 toast) → field-level form errors from 400 responses.
+Global ErrorBoundary → API interceptor (401 refresh, 500 toast) → field-level form errors from 400 responses.`}
 
 ## 11. Testing Strategy
 ### Philosophy
 Test pyramid shape for this project, coverage targets, what is intentionally NOT tested.
-### Backend Test Plan
+${isConsole ? `### Test Plan
+| ID | Scenario | Type | Input | Expected | Tool |
+(8+ rows: menu operations happy paths, invalid-input handling, file-not-found/corrupt-file handling, edge cases like an empty list — NOT auth/permission/HTTP-status cases, none exist here)
+### Test Environment
+A separate test data file (never overwrite real data), how tests reset state between runs.` : `### Backend Test Plan
 | ID | Scenario | Type | Input | Expected | Tool |
 (10+ rows: CRUD happy paths, auth edge cases, validation failures, permission checks, 404s)
 ### Frontend Test Plan
 | ID | Component/Flow | Type | Scenario | Expected | Tool |
 (6+ rows: render, protected routes, form validation, API success/error)
 ### Test Environment
-Separate DB setup, mocked external services, seed data strategy.
+Separate DB setup, mocked external services, seed data strategy.`}
 
 ## 12. Security Checklist
-| Threat | Mitigation | Implementation Detail | Priority |
+${isConsole ? `| Concern | Mitigation | Implementation Detail | Priority |
+(3-5 rows relevant ONLY to a local console app — e.g. input validation to prevent crashes on malformed input, safe file I/O error handling, no plaintext password storage if a login step exists. Do NOT include SQL Injection, XSS, CSRF, CORS, HTTPS/HSTS, or JWT theft — none of them apply to a program with no network layer.)` : `| Threat | Mitigation | Implementation Detail | Priority |
 | SQL Injection | ORM parameterized queries | All DB access via ${stack.orm}; raw SQL banned | P0 |
 | XSS | Output escaping + CSP header | Framework escapes by default; CSP blocks inline scripts | P0 |
 | CSRF | SameSite=Strict cookie | Refresh cookie: SameSite=Strict; CSRF middleware enabled | P0 |
@@ -3369,10 +3421,16 @@ Separate DB setup, mocked external services, seed data strategy.
 | Secrets | Env vars only | No credentials in code; .env in .gitignore | P0 |
 | Insecure Uploads | MIME + size check | Validate Content-Type; reject > 10MB server-side | P1 |
 | HTTPS/HSTS | TLS + strict headers | HTTP→HTTPS redirect; HSTS max-age=31536000 | P0 |
-| PII Over-fetch | Explicit serializer fields | No wildcard field inclusion in production serializers | P1 |
+| PII Over-fetch | Explicit serializer fields | No wildcard field inclusion in production serializers | P1 |`}
 
 ## 13. Deployment Guide
-### Development (Docker Compose)
+${isConsole ? `N/A — no hosting, containers, or CI/CD are needed for a local console application.
+### Build & Run
+\`\`\`bash
+[Exact commands to compile/package and run locally from source — e.g. javac + java, or mvn package then java -jar app.jar; or python main.py. Include both "run from source" and "produce a distributable artifact" if applicable.]
+\`\`\`
+### Distribution
+How someone else obtains and runs this program (e.g. share the .jar/.py file, or list the runtime prerequisite like a JDK/Python version).` : `### Development (Docker Compose)
 \`\`\`yaml
 [docker-compose.yml: ${dialect.dockerImage ? `db (${dialect.dockerImage}) with env vars ${dialect.dockerEnvVars.join(', ')}` : 'NO separate db container — SQLite is a local file, mount it as a volume into the backend service instead'}, ${hasCache ? 'redis (redis:7-alpine), ' : ''}backend (port 8000), frontend (port 5173)${hasTasks ? ', worker, beat' : ''}. Volumes, depends_on, healthchecks.]
 \`\`\`
@@ -3391,10 +3449,14 @@ Internet → Cloudflare → ${feHost} (frontend static)
 [Every command: git clone → env setup → DB provision → deploy backend → deploy frontend → verify live URL on ${brief.hosting}]
 \`\`\`
 ### Rollback
-Migration rollback command, previous image tag revert, feature flag kill-switch.
+Migration rollback command, previous image tag revert, feature flag kill-switch.`}
 
 ## 14. Performance Requirements
-| Metric | Target | How Measured |
+${isConsole ? `| Metric | Target | How Measured |
+(2-3 rows relevant to a local console app, e.g. startup time, file load/save time at the expected data size, max records handled without a noticeable delay — NOT network/web metrics like API latency, Page LCP, or concurrent users)
+### Optimization Techniques
+| Area | Technique | Gain |
+(1-2 rows relevant to in-memory/file operations, e.g. choosing the right collection type for lookups, buffered file I/O)` : `| Metric | Target | How Measured |
 | API p95 latency | < 200ms | APM / UptimeRobot |
 | Page LCP | < 2.5s | Lighthouse CI |
 | Time to Interactive | < 4.0s | Lighthouse CI |
@@ -3402,22 +3464,25 @@ Migration rollback command, previous image tag revert, feature flag kill-switch.
 | Concurrent users | 500 (v1) | k6 load test |${hasRealtime ? '\n| WebSocket latency | < 100ms | Ping/pong probe |' : ''}
 ### Optimization Techniques
 | Area | Technique | Gain |
-(DB indexes, ${hasCache ? 'Redis cache TTLs, ' : ''}N+1 prevention, code splitting, CDN, connection pooling)
+(DB indexes, ${hasCache ? 'Redis cache TTLs, ' : ''}N+1 prevention, code splitting, CDN, connection pooling)`}
 
 ## 15. Environment Variables
-| Variable | Example Value | Description | Required | Service |
-(12+ rows: SECRET_KEY, DATABASE_URL, ${hasCache ? 'REDIS_URL, ' : ''}JWT_SECRET, EMAIL credentials, STORAGE credentials, VITE_API_URL, SENTRY_DSN${hasRealtime ? ', WS_URL' : ''})
+${isConsole ? `N/A — a local console application needs no environment variables or secrets.${/multi-user|login|password/i.test(featAll) ? ' If a local config value is needed (e.g. the data file path), mention it as a simple constant in the code, not an env var.' : ''}` : `| Variable | Example Value | Description | Required | Service |
+(12+ rows: SECRET_KEY, DATABASE_URL, ${hasCache ? 'REDIS_URL, ' : ''}JWT_SECRET, EMAIL credentials, STORAGE credentials, VITE_API_URL, SENTRY_DSN${hasRealtime ? ', WS_URL' : ''})`}
 
 ## 16. Project Folder Structure
 \`\`\`
-project-root/
+${isConsole ? `project-root/
+├── src/         ← ${stack.lang} source files
+└── data/        ← local data file(s) used for persistence
+[Expand only source subdirectories with ├── └── notation and ← comments — a single-module console app, no backend/frontend/nginx/docker split. Keep under ~25 lines.]` : `project-root/
 ├── backend/     ← ${brief.backend} app
 ├── frontend/    ← ${brief.frontend} app
 ├── nginx/       ← reverse proxy config
 ├── .github/workflows/  ← CI/CD pipelines
 ├── docker-compose.yml
 └── .env.example
-[Expand only source subdirectories with ├── └── notation and ← comments. Never expand .idea/.vscode/node_modules/target/build/.git — collapse each to one line. Keep under ~40 lines total.]
+[Expand only source subdirectories with ├── └── notation and ← comments. Never expand .idea/.vscode/node_modules/target/build/.git — collapse each to one line. Keep under ~40 lines total.]`}
 \`\`\`
 
 ## 17. Build Order / Developer Checklist

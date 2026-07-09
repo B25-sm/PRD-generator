@@ -5019,6 +5019,18 @@ function localPRDAudit(brief, md) {
   // domain's template can produce (e.g. the Data Analysis SQL block, or an
   // ML/security "Rationale" column). ──
 
+  // Backstop for dedupePRDContent's "(continued)" fold: if a restart heading is
+  // still present after local fixes have run (an edge case the merge regex
+  // didn't recognize), flag it so the LLM repair merges it instead of it
+  // shipping as two disconnected sections.
+  const continuedHeads = (text.match(/^##\s+.+$/gm) || []).filter(h => /\bcont(?:'d|inued)\b/i.test(h));
+  continuedHeads.forEach(h => issues.push({
+    severity: 'critical',
+    where: h.replace(/^##\s+/, ''),
+    problem: `"${h.replace(/^##\s+/, '')}" is a second, disconnected section restarting an earlier one instead of continuing it.`,
+    fix: 'Merge its content into the original section (same heading) and remove this duplicate heading.'
+  }));
+
   // Dangling foreign key: a FOREIGN KEY that references a table never CREATE'd
   // (e.g. reviews.product_id → "products" in a food app that only has menu_items).
   if (/CREATE TABLE/i.test(text)) {
@@ -6223,12 +6235,52 @@ function fixSqlTableOrder(md) {
 // These never depend on the model, so the mechanical errors (SQL order,
 // Vite vars in a Next.js project) are fixed even when the audit/fix pass
 // is rate-limited or skipped.
+// A Glossary sometimes defines generic CS terms that never actually appear
+// anywhere else in the document — typically leftover boilerplate, or a
+// continuation call (given only a short tail) reaching for safe, generic
+// filler ("Mocking", "Dependency injection", "Test-driven development") instead
+// of resuming the real one. Drop only rows whose exact term text is provably
+// absent elsewhere in the doc — conservative by construction: a term phrased
+// differently elsewhere is a false negative we simply leave alone (never
+// wrongly deleted), and the section is never trimmed below 5 rows.
+function pruneUnusedGlossaryTerms(md) {
+  if (!md) return md;
+  const parts = splitPRDSections(md);
+  const gi = parts.findIndex(p => /^(?:\d+\.\s*)?glossary\b/i.test(p.heading || ''));
+  if (gi === -1) return md;
+
+  const lines = parts[gi].text.split('\n');
+  const restOfDoc = parts.filter((_, i) => i !== gi).map(p => p.text).join('\n');
+  const dataRows = [];
+  lines.forEach((line, i) => {
+    const m = line.match(/^\|\s*([^|]+?)\s*\|\s*[^|]+?\s*\|\s*$/);
+    if (!m) return;
+    const term = m[1].trim();
+    if (!term || /^:?-{2,}:?$/.test(term) || /^term$/i.test(term)) return; // header/separator row
+    dataRows.push({ i, term });
+  });
+  if (dataRows.length < 8) return md; // too few rows to safely prune anything
+
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const toDrop = new Set();
+  dataRows.forEach(({ i, term }) => {
+    const re = new RegExp('(^|[^A-Za-z0-9])' + esc(term) + '([^A-Za-z0-9]|$)', 'i');
+    if (!re.test(restOfDoc)) toDrop.add(i);
+  });
+  if (!toDrop.size || dataRows.length - toDrop.size < 5) return md; // never gut the section
+
+  const newLines = lines.filter((_, i) => !toDrop.has(i));
+  parts[gi] = { heading: parts[gi].heading, text: newLines.join('\n') };
+  return parts.map(p => p.text).join('');
+}
+
 function postProcessPRD(brief, md) {
   if (!md) return md;
   let out = collapseRunawayRepetition(md); // kill any repetition loop before anything else reads it
   out = applyLocalFixes(brief, out);
   out = fixSqlTableOrder(out);
-  out = dedupePRDContent(out);
+  out = dedupePRDContent(out); // also folds a "(continued)" restart back into its original section
+  out = pruneUnusedGlossaryTerms(out);
   const isNext = /next\.js|nextjs|\bnext\b/i.test((brief && brief.frontend) || '');
   if (isNext) {
     // Vite env vars do not exist in Next.js — drop any VITE_* env-var table rows…
@@ -6257,18 +6309,40 @@ function dedupeSubsectionsInSection(sectionText) {
   return header + order.map(k => subs.get(k)).join('');
 }
 
-// Merge duplicate top-level ## sections and dedupe ### subsections inside each.
+// A continuation call given only a short tail can't always see that a section
+// (typically the Glossary, since it's last) already started — so it plays it
+// safe and opens "## Glossary (continued)" instead of silently resuming the
+// same table. Strip that kind of suffix so it folds back into the original
+// section's key instead of becoming a second, separate top-level section.
+function stripContinuedSuffix(heading) {
+  return heading.replace(/\s*[\(\[][^)\]\n]*?\bcont(?:'d|inued)?\.?\s*[\)\]]?\s*$/i, '')
+                .replace(/\s*[-–—]\s*cont(?:'d|inued)?\.?\s*$/i, '')
+                .trim();
+}
+
+// Merge duplicate top-level ## sections (including "(continued)" restarts) and
+// dedupe ### subsections inside each.
 function dedupePRDContent(md) {
   const parts = splitPRDSections(md);
   const merged = [];
   const indexByKey = new Map();
+  // A restated "| Term | Definition |"-style header + separator row pair.
+  const tableHeaderRe = /^\|[^\n]*\|[ \t]*\r?\n\|[\s:|-]+\|[ \t]*\r?\n/;
   for (const p of parts) {
     if (!p.heading) { merged.push(p); continue; }
-    const key = p.heading.toLowerCase().replace(/^\d+\.\s*/, '').replace(/\s+/g, ' ').trim();
+    const key = stripContinuedSuffix(p.heading.toLowerCase().replace(/^\d+\.\s*/, '')).replace(/\s+/g, ' ').trim();
     if (indexByKey.has(key)) {
       const ix = indexByKey.get(key);
-      const extra = p.text.replace(/^##[^\n]*\n?/, '').trim();
-      if (extra) merged[ix].text = merged[ix].text.trimEnd() + '\n\n' + extra + '\n';
+      let extra = p.text.replace(/^##[^\n]*\n?/, '').trim();
+      let sep = '\n\n';
+      // Both halves are tables → drop the restated header/separator so the rows
+      // read as ONE continuous table instead of two back-to-back tables.
+      const parentBody = merged[ix].text.replace(/^##[^\n]*\n?/, '').trimStart();
+      if (tableHeaderRe.test(extra + '\n') && tableHeaderRe.test(parentBody + '\n')) {
+        extra = extra.replace(tableHeaderRe, '');
+        sep = '\n';
+      }
+      if (extra) merged[ix].text = merged[ix].text.trimEnd() + sep + extra + '\n';
     } else {
       indexByKey.set(key, merged.length);
       merged.push({ heading: p.heading, text: p.text });

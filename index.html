@@ -3053,8 +3053,11 @@ function inferSqlDialect(database) {
 // Auto-correct a brief so auth/runtime/stack fields are internally consistent
 // BEFORE the PRD is ever generated. Returns { brief, fixes: string[] }.
 function enforceStackConsistency(brief) {
-  const fixes = [];
+  // Seed with any note from correctLanguageAndScope() so it still shows in the
+  // "Auto-corrected" panel even on the console/CLI early-return path below.
+  const fixes = [...(brief._pendingFixes || [])];
   const b = { ...brief };
+  delete b._pendingFixes;
   // A plain console/CLI app has no web framework, ORM, or network auth — none of the
   // web-stack auto-corrections below apply, and "java"/"python" substring matches would
   // otherwise wrongly force e.g. auth back to "JWT + Spring Security" for a console app.
@@ -3138,6 +3141,57 @@ function enforceStackConsistency(brief) {
 
   b._stackFixes = fixes;
   return { brief: b, fixes };
+}
+
+// Deterministic language + app-scope correction, run on the RAW idea after Stage 1
+// (for BOTH picked and hand-typed inputs). The small Stage-1 model routinely ignores
+// the language the user stated — turning "Email Automation Script in Python" into a
+// Node.js + React + MongoDB web app. This (1) forces the stated language, and (2) for
+// a clear script/automation/CLI idea with NO web signals, forces a plain local-script
+// stack (reusing the downstream console/CLI machinery). Conservative by construction:
+// with no explicit language it does nothing, and it only forces console mode on an
+// unambiguous script signal — a real web app is never converted.
+function correctLanguageAndScope(idea, brief) {
+  const text = ' ' + (idea || '').toLowerCase() + ' ';
+  const LANGS = [
+    { name: 'Python', re: /\bpython\b|\bpandas\b|\bflask\b|\bdjango\b|\bfastapi\b/, isBackend: b => /python|flask|django|fastapi/.test(b), webFw: () => /\bdjango\b/.test(text) ? 'Django' : /\bfastapi\b/.test(text) ? 'FastAPI' : 'Flask (Python)' },
+    { name: 'Java',   re: /\bjava\b(?!\s*script)|\bspring\b/,                       isBackend: b => /java|spring|kotlin/.test(b),          webFw: () => 'Spring Boot' },
+    { name: 'Go',     re: /\bgo(?:lang)?\b|\bgin\b|\bfiber\b/,                      isBackend: b => /\bgo\b|golang|gin|fiber|echo/.test(b), webFw: () => 'Gin (Go)' },
+    { name: 'C#',     re: /\bc#|\basp\.net\b|\.net\b/,                              isBackend: b => /c#|\.net|asp/.test(b),                webFw: () => 'ASP.NET Core' },
+    { name: 'Rust',   re: /\brust\b|\bactix\b|\baxum\b/,                           isBackend: b => /rust|actix|axum|rocket/.test(b),      webFw: () => 'Axum (Rust)' },
+    { name: 'C++',    re: /\bc\+\+|\bcpp\b/,                                        isBackend: b => /c\+\+|cpp/.test(b),                   webFw: () => null },
+    { name: 'Bash',   re: /\bbash\b|\bshell script\b/,                             isBackend: b => /bash|shell/.test(b),                  webFw: () => null },
+  ];
+  const lang = LANGS.find(l => l.re.test(text));
+  if (!lang) return brief; // no explicit language stated → trust the model's inference
+
+  const scriptSig = /\b(script|automat\w+|scraper|scrap(?:e|ing)|\bbot\b|\bcli\b|command[- ]line|\btool\b|utility|parser|convert(?:er|or)?|organi[sz]er|merger|splitter|resizer|renamer|analy[sz]er|downloader|generator|\bcron\b|scheduled)\b/.test(text);
+  const webSig    = /\b(website|web[- ]?app|web application|web[- ]?based|rest api|full[- ]?stack|front[- ]?end|react|vue|angular|next\.?js|svelte|\bnode\b|express|rails|laravel|saas|marketplace|e-?commerce|social (?:media|network)|sign[- ]?up|streamlit|web dashboard)\b/.test(text);
+
+  if (scriptSig && !webSig) {
+    brief.frontend = 'None (console/CLI application)';
+    brief.backend  = `${lang.name} (script/automation — standard library + task-specific libraries, no web framework)`;
+    brief.database = /\bsqlite\b/.test(text) ? 'SQLite (local file database)' : 'File-based storage (CSV/JSON files)';
+    brief.auth     = 'None (single local user)';
+    brief.hosting  = 'N/A — runs locally or on a schedule (e.g. cron)';
+    if (!brief.otherTools || /^none$/i.test((brief.otherTools || '').trim())) brief.otherTools = 'None';
+    // Drop now-stale web assumptions (MongoDB, ~10k users, hosting, Node/React…).
+    if (Array.isArray(brief.assumptions))
+      brief.assumptions = brief.assumptions.filter(a => !/mongo|postgres|mysql|\bsql\b|database|traffic|daily users|users?\s*\/\s*day|hosting|vercel|render|railway|heroku|\bnode\b|express|react|vue|angular|frontend|scalab|microservice/i.test(a));
+    brief._pendingFixes = [`Forced a ${lang.name} script/CLI stack — the idea is an automation/CLI script, not a web app`];
+    return brief;
+  }
+
+  // Web/app idea: at minimum keep the LANGUAGE the user asked for (don't let
+  // "Python" silently become "Node.js + Express").
+  if (!lang.isBackend((brief.backend || '').toLowerCase())) {
+    const fw = lang.webFw();
+    if (fw) {
+      brief._pendingFixes = [`Backend "${brief.backend || '(unset)'}" → ${fw} — the idea explicitly says ${lang.name}`];
+      brief.backend = fw;
+    }
+  }
+  return brief;
 }
 
 function buildWebPrompt(brief) {
@@ -4808,6 +4862,13 @@ async function runGeneratePRD() {
       brief.otherTools = 'None';
     }
     _pendingConsoleOverride = null;
+
+    // Deterministic language + scope correction for hand-typed AND non-basic picks
+    // (the console override above only covers basic Java/Python picks). Skip if a
+    // console stack was already forced above.
+    if (!/console/i.test(brief.frontend || '')) {
+      brief = correctLanguageAndScope(idea, brief);
+    }
 
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);

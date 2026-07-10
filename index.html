@@ -2561,7 +2561,7 @@ const DOMAINS = {
       { key: 'backend',    label: 'Backend',     cat: 'backend',  desc: 'Specific backend (e.g. Spring Boot 3.2, Django 4.2, Node.js + Express, FastAPI)', placeholder: 'e.g. Spring Boot, Node.js + Express' },
       { key: 'database',   label: 'Database',    cat: 'database', desc: 'Specific DB (e.g. PostgreSQL 16, MySQL 8, MongoDB 7)', placeholder: 'e.g. PostgreSQL, MySQL, MongoDB' },
       { key: 'auth',       label: 'Auth',        cat: 'auth',     desc: 'Auth method (e.g. JWT + Passport.js, OAuth2, NextAuth, Firebase Auth, Supabase Auth). NOT state libraries like Redux.', placeholder: 'e.g. JWT, OAuth2, NextAuth — not Redux' },
-      { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)'", placeholder: 'e.g. Vercel + Render + Supabase' },
+      { key: 'hosting',    label: 'Hosting',     cat: 'hosting',  desc: "FREE hosting only — match the database field (e.g. MongoDB → MongoDB Atlas, PostgreSQL → Supabase/Neon, MySQL → Railway/PlanetScale)", placeholder: 'e.g. Vercel + Render + MongoDB Atlas' },
       { key: 'otherTools', label: 'Other Tools', cat: null,       desc: 'Other tools like Redis, Stripe, SendGrid, Cloudinary (or "None")', placeholder: 'e.g. Stripe, Redis, Cloudinary' }
     ],
     expandHint: `CONSOLE/CLI DETECTION — CHECK THIS FIRST: if the user's input explicitly describes a plain console/CLI/desktop program with NO web frontend (e.g. says "console app", "CLI", "plain Java"/"plain Python", "OOP, collections", "OOP, file handling", or otherwise clearly wants a single local program rather than a client-server web app), do NOT invent a web stack. Instead set EXACTLY: frontend = "None (console application)", backend = "<language> (plain, console-based, no framework)" matching the stated language, database = "File-based storage (e.g. serialized objects or a CSV/JSON file)" (or "In-memory collections only" if no persistence is implied), auth = "None (single local user)", hosting = "N/A — runs locally, no hosting needed", otherTools = "None". coreFeatures must be the actual menu operations (e.g. "Add book", "Search by ISBN", "List all books", "Remove a book", "Save/load data to file") — NOT web-app features like "user registration" or "REST API".
@@ -3238,7 +3238,7 @@ HOSTING RULE — CRITICAL: Always recommend FREE hosting options. Never suggest 
 - Backend (Python/Django/FastAPI): "Render (free tier)" or "Railway (starter plan)"  
 - Backend (Java/Spring Boot): "Render (free tier)" or "Railway (starter plan)"
 - Database: "Supabase (free PostgreSQL)" or "Railway PostgreSQL (free credits)" or "MongoDB Atlas (free 512MB)"
-- Full-stack combo: "Vercel (frontend) + Render (backend) + Supabase (DB)" — all free
+- Full-stack combo: match the selected database: MongoDB → "Vercel (frontend) + Render (backend) + MongoDB Atlas (DB)", PostgreSQL → "Vercel (frontend) + Render (backend) + Supabase/Neon (DB)", MySQL → "Vercel (frontend) + Render (backend) + Railway/PlanetScale (DB)"
 
 Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Just raw JSON:
 
@@ -3252,7 +3252,7 @@ Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Ju
   "backend": "Specific backend (e.g. Spring Boot 3.2, Django 4.2, Node.js + Express, FastAPI)",
   "database": "Specific DB (e.g. PostgreSQL 16, MySQL 8, MongoDB 7)",
   "auth": "Auth method (e.g. JWT + Spring Security, JWT + Passport.js, Session-based, Firebase Auth)",
-  "hosting": "FREE hosting only — e.g. 'Vercel (frontend) + Render (backend) + Supabase (DB)' or 'Vercel + Railway' or 'Cloudflare Pages + Render'",
+  "hosting": "FREE hosting only and database-matched — e.g. MongoDB uses MongoDB Atlas, PostgreSQL uses Supabase/Neon, MySQL uses Railway/PlanetScale",
   "otherTools": "Other tools like Redis, Stripe, SendGrid, Cloudinary, etc. (or 'None')",
   "coreFeatures": ["feature 1", "feature 2", "feature 3", "feature 4", "feature 5"],
   "niceToHave": ["feature A", "feature B", "feature C"],
@@ -3326,7 +3326,9 @@ function inferWebStack(brief) {
     framework: /express/.test(be) ? 'Express.js' : 'Node.js',
     orm: pickOrm({ orm: /mongo/i.test(db) ? 'Mongoose' : 'Prisma' }),
     rest: /express/.test(be) ? 'Express.js routes' : 'Node.js HTTP API',
-    concepts: 'Prisma schema / models, routes, controllers, middleware, services, validators (Zod/Joi)'
+    concepts: /mongo/i.test(db)
+      ? 'Mongoose schemas/models, routes, controllers, middleware, services, validators (Zod/Joi)'
+      : 'Prisma schema/models, routes, controllers, middleware, services, validators (Zod/Joi)'
   };
 }
 
@@ -3430,7 +3432,7 @@ function enforceStackConsistency(brief) {
     }
   }
 
-  // Hosting DB name should match database field (not invent Supabase when user said PostgreSQL)
+  // Hosting DB name should match database field (not invent Supabase when user chose another DB)
   const db = (b.database || '').toLowerCase();
   let host = (b.hosting || '').toLowerCase();
   const usesJvmTemplate = isJava && /\bthymeleaf|jsp|freemarker|velocity\b/i.test(b.frontend || '');
@@ -3443,8 +3445,15 @@ function enforceStackConsistency(brief) {
     b.hosting = newHost;
     host = (b.hosting || '').toLowerCase();
   }
+  if (/mongo/.test(db) && /supabase/.test(host)) {
+    const newHost = b.hosting.replace(/supabase[^+]*/gi, 'MongoDB Atlas (DB)').replace(/\+\s*\+/g, '+').trim();
+    fixes.push(`Hosting: removed Supabase — MongoDB projects should use MongoDB Atlas or the confirmed MongoDB host`);
+    b.hosting = newHost;
+    host = (b.hosting || '').toLowerCase();
+  }
   if (/postgres|mysql|mariadb/.test(db) && !/supabase/.test(db) && /supabase/.test(host)) {
-    const newHost = b.hosting.replace(/supabase[^+]*/gi, b.database.split(' ')[0]).replace(/\(\s*db\s*\)/gi, '(DB)').replace(/\+\s*\+/g, '+').trim();
+    const dbHost = /mysql/.test(db) ? 'MySQL (DB)' : /mariadb/.test(db) ? 'MariaDB (DB)' : `${b.database.split(' ')[0]} (DB)`;
+    const newHost = b.hosting.replace(/supabase[^+]*/gi, dbHost).replace(/\(\s*db\s*\)/gi, '(DB)').replace(/\+\s*\+/g, '+').trim();
     fixes.push(`Hosting: removed Supabase — using "${b.database}" as stated`);
     b.hosting = newHost;
   }
@@ -3617,7 +3626,8 @@ STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
 - Every Tech Stack table row, architecture section, folder tree, and security note MUST reflect this stack only.
 - Auth (backend table + Section 8): "${brief.auth}" exactly — NEVER list NextAuth/Passport in the backend table for Spring Boot; NextAuth is frontend-only on Next.js.
 - Architecture: ${isConsole ? 'SINGLE-PROCESS CONSOLE APP — one local program, no client/server split, no API, no separate frontend. Do NOT describe a frontend/backend split, hosting, or deployment architecture anywhere in this document.' : isServerRenderedWeb ? `SERVER-RENDERED MONOLITH — one ${stack.framework} application renders ${brief.frontend} views and handles form/API requests in the same backend deployment. Do NOT describe a separate Vercel/static frontend.` : `MONOLITH — one ${stack.framework} API + separate ${brief.frontend} frontend deployed independently. Do NOT describe as "microservices" unless the user explicitly requested microservices.`}
-- Production Architecture diagram database MUST be "${dbHost}" — do not substitute Supabase/other unless the database field says so.
+- Production Architecture diagram database MUST be "${dbHost}" — do not substitute any other database host unless the database or hosting field says so.
+- Hosting/database consistency: the database host in architecture, deployment, environment variables, and setup steps must match the confirmed Database and Hosting fields exactly. Do not name a different database host.
 - "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
 - State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
 - NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
@@ -3650,7 +3660,7 @@ ${lvl.id === 'basic' ? '### What You\'ll Practice\n4-6 concrete skills/concepts 
 ## 2. Tech Stack Overview
 ### Backend
 | Layer | Technology | Version | Purpose | Why Chosen |
-${isConsole ? `(3-5 rows for a plain ${stack.lang} console app: language, core collections/data structures used, file I/O approach for persistence, build tool. NO framework, ORM, REST layer, auth, or hosting rows — none of those exist in a local console program.)` : `(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)`}
+${isConsole ? `(3-5 rows for a plain ${stack.lang} console app: language, core collections/data structures used, file I/O approach for persistence, build tool. NO framework, ORM, REST layer, auth, or hosting rows — none of those exist in a local console program.)` : `(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Prisma unless the ORM is actually Prisma, not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)`}
 ### Frontend
 ${isConsole ? `N/A — no separate frontend/UI framework; all interaction happens through the terminal. State this in one sentence instead of a table.` : isServerRenderedWeb ? `| Layer | Technology | Version | Purpose | Why Chosen |
 (6+ rows for server-rendered UI: template engine from ${brief.frontend}, backend route/controller layer, server-side validation, Bootstrap/Tailwind or plain CSS, minimal JavaScript/progressive enhancement, form handling, template testing. Do NOT include React/Vite/SPA routing/state management.)` : `| Layer | Technology | Version | Purpose | Why Chosen |
@@ -5255,7 +5265,7 @@ async function runGeneratePRD() {
 function domainSystemExtra(d) {
   const common = `\n\nFOLLOW THE EXACT SECTION STRUCTURE in the user message — same headings, same order, every table populated with real rows. COVER EVERY TOOL listed in the STACK — each must appear in the relevant sections, never silently dropped.`;
   if (d.id === 'web') {
-    return common + `\n\nDOMAIN = FULLSTACK WEB. Use FREE hosting ONLY — Vercel, Render, Railway, Supabase, Cloudflare Pages. Never recommend paid defaults like DigitalOcean/AWS EC2/Heroku. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend). CRITICAL: The ORM and backend language MUST match the stated backend — Node.js + Express → Prisma/Sequelize/Mongoose (JavaScript/TypeScript); Spring Boot → JPA/Hibernate (Java); Django → Django ORM (Python). NEVER inject Spring/JPA/Hibernate into a Node stack or Express concepts into a Java stack.`;
+    return common + `\n\nDOMAIN = FULLSTACK WEB. Use the confirmed Hosting field only; never introduce an unconfirmed host or database provider. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend). CRITICAL: The ORM and backend language MUST match the stated backend — Node.js + Express + MongoDB → Mongoose; Spring Boot → JPA/Hibernate (Java); Django → Django ORM (Python). NEVER inject Spring/JPA/Hibernate into a Node stack or Express concepts into a Java stack.`;
   }
   switch (d.id) {
     case 'ml':
@@ -5405,6 +5415,12 @@ function localPRDAudit(brief, md) {
 
     if (/microservices?\s+architect|utilize a microservices|microservice-based/i.test(text))
       issues.push({ severity: 'critical', where: 'System Architecture', problem: 'Describes microservices but stack is a single monolith backend + frontend.', fix: 'Describe as monolith: one API service + separate frontend deployment.' });
+
+    if (/mongo/i.test(db) && /\bsupabase\b/i.test(text))
+      issues.push({ severity: 'critical', where: 'Production Architecture', problem: `Document mentions Supabase but database is "${brief.database}".`, fix: 'Use MongoDB Atlas / confirmed MongoDB hosting wording instead of Supabase.' });
+
+    if (/mongo/i.test(db) && /\bprisma schema\b|\bprisma client\b/i.test(text))
+      issues.push({ severity: 'critical', where: 'Backend Architecture', problem: 'MongoDB stack should use Mongoose terminology, but the PRD mentions Prisma.', fix: 'Replace Prisma schema/client references with Mongoose schema/model references.' });
 
     if (/postgres/i.test(db) && !/supabase/.test(db) && /\bsupabase\b/i.test(text))
       issues.push({ severity: 'critical', where: 'Production Architecture', problem: `Diagram/text mentions Supabase but database is "${brief.database}".`, fix: `Use "${brief.database}" consistently in all architecture references.` });
@@ -5966,6 +5982,7 @@ function applyLocalFixes(brief, md) {
   const isEcom = /e-?commerce|marketplace|shop|cart|checkout/.test(featAll);
   const be = (brief.backend || '').toLowerCase();
   const fe = (brief.frontend || '').toLowerCase();
+  const db = (brief.database || '').toLowerCase();
   const isJava = /spring|java|kotlin/.test(be);
   const isNext = /next\.js|nextjs|\bnext\b/.test(fe);
 
@@ -6005,6 +6022,14 @@ function applyLocalFixes(brief, md) {
   // Generic filler → specific, technology-aware rationale (kills the filler +
   // duplicate-rationale audit checks deterministically).
   out = fixGenericFiller(brief, out);
+
+  if (/mongo/.test(db)) {
+    out = out.replace(/\bSupabase\s*\(DB\)/gi, 'MongoDB Atlas (DB)');
+    out = out.replace(/\bSupabase\b/gi, 'MongoDB Atlas');
+    out = out.replace(/\bPrisma schema\b/gi, 'Mongoose schema');
+    out = out.replace(/\bPrisma client\b/gi, 'Mongoose model API');
+    out = out.replace(/\bPrisma\b/gi, 'Mongoose');
+  }
 
   // Microservices language on a monolith stack → monolith (the template forces
   // monolith unless the user explicitly asked; the audit flags any leak).

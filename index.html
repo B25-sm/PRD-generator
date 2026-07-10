@@ -2215,6 +2215,7 @@ let apiKey = localStorage.getItem(STORAGE_KEY_API) || '';
 // stack fields deterministically once we already know the answer from the pick itself.
 // Cleared the moment the user types (a genuine edit invalidates the assumption).
 let _pendingConsoleOverride = null;
+let _pendingPickedIdea = null;
 
 // ═══════════════════════════════════════════════════════════
 //  INIT
@@ -2223,6 +2224,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('idea-input').addEventListener('input', e => {
     document.getElementById('char-count').textContent = e.target.value.length;
     _pendingConsoleOverride = null;
+    _pendingPickedIdea = null;
   });
 
   if (apiKey) {
@@ -2888,6 +2890,7 @@ function pickIdea(categoryKey, ideaName) {
   _pendingConsoleOverride = (currentLevel === 'basic' && (categoryKey === 'java' || categoryKey === 'python'))
     ? { language: categoryKey === 'java' ? 'Java' : 'Python', level: currentLevel, domain: cat.domain }
     : null;
+  _pendingPickedIdea = { categoryKey, ideaName, level: currentLevel, domain: cat.domain };
 
   closeIdeaPicker();
   ta.focus();
@@ -3048,6 +3051,61 @@ function applyExplicitStackFromIdea(idea, brief) {
 
   if (/account|log(?:ging)? in|login|authentication|auth\b/.test(text) && (!b.auth || /none|single local user/i.test(b.auth))) {
     set('auth', /node|express/i.test(b.backend || '') ? 'JWT + Passport.js' : 'JWT-based authentication', 'accounts/login requested');
+  }
+
+  b._pendingFixes = fixes;
+  return b;
+}
+
+function applyPickedIdeaStack(brief) {
+  if (!_pendingPickedIdea) return brief;
+  if (_pendingPickedIdea.domain !== currentDomainId || _pendingPickedIdea.level !== currentLevel) return brief;
+
+  const { categoryKey, ideaName, level } = _pendingPickedIdea;
+  const name = (ideaName || '').toLowerCase();
+  const b = { ...brief };
+  const fixes = [...(b._pendingFixes || [])];
+  const set = (field, value, reason) => {
+    if ((b[field] || '').trim() !== value) {
+      fixes.push(`${field}: "${b[field] || '(empty)'}" -> "${value}" (${reason})`);
+      b[field] = value;
+    }
+  };
+
+  if (categoryKey === 'python') {
+    if (level === 'basic' || /scraper|automation|pdf|merger|splitter|image resizer|log analyzer|expense tracker|socket programming/.test(name)) {
+      set('frontend', /expense tracker/.test(name) ? 'Tkinter GUI or CLI menu' : 'None (console/CLI application)', 'selected from the Python project library');
+      set('backend', 'Python (script/automation — standard library + task-specific libraries, no web framework)', 'selected from the Python project library');
+      set('database', /expense tracker|log analyzer/.test(name) ? 'SQLite or CSV/JSON files' : 'File-based storage (CSV/JSON files)', 'selected from the Python project library');
+      set('auth', 'None (single local user)', 'selected from the Python project library');
+      set('hosting', /automation|scraper|log analyzer/.test(name) ? 'N/A — runs locally or on a schedule (e.g. cron)' : 'N/A — runs locally', 'selected from the Python project library');
+      if (/socket programming/.test(name)) set('otherTools', 'Python socket module', 'selected from the Python project library');
+      else if (/scraper/.test(name)) set('otherTools', 'BeautifulSoup, Requests', 'selected from the Python project library');
+      else if (/pdf/.test(name)) set('otherTools', 'PyPDF2 or pypdf', 'selected from the Python project library');
+      else if (/image resizer/.test(name)) set('otherTools', 'Pillow', 'selected from the Python project library');
+      else set('otherTools', 'None', 'selected from the Python project library');
+    } else if (/interactive dashboard|streamlit/.test(name)) {
+      set('frontend', 'Streamlit UI', 'selected from the Python project library');
+      set('backend', 'Python + Streamlit', 'selected from the Python project library');
+      set('database', 'CSV files or SQLite', 'selected from the Python project library');
+      set('auth', 'None or simple password gate', 'selected from the Python project library');
+      set('hosting', 'Streamlit Community Cloud', 'selected from the Python project library');
+      set('otherTools', 'pandas, Plotly', 'selected from the Python project library');
+    } else if (/data analysis dashboard/.test(name)) {
+      set('frontend', 'Streamlit or Dash UI', 'selected from the Python project library');
+      set('backend', 'Python + pandas', 'selected from the Python project library');
+      set('database', 'CSV files or SQLite', 'selected from the Python project library');
+      set('auth', 'None (single analyst)', 'selected from the Python project library');
+      set('hosting', 'Streamlit Community Cloud or Render', 'selected from the Python project library');
+      set('otherTools', 'pandas, Matplotlib', 'selected from the Python project library');
+    } else {
+      set('frontend', 'HTML/CSS + Jinja templates', 'selected from the Python project library');
+      set('backend', /weather/.test(name) ? 'Flask (Python)' : 'FastAPI or Flask (Python)', 'selected from the Python project library');
+      set('database', /url shortener/.test(name) ? 'SQLite or PostgreSQL' : 'SQLite', 'selected from the Python project library');
+      set('auth', /url shortener/.test(name) ? 'None for public links; optional JWT admin login' : 'None or simple session auth', 'selected from the Python project library');
+      set('hosting', 'Render (Python web service)', 'selected from the Python project library');
+      set('otherTools', /weather/.test(name) ? 'Requests, external weather API' : 'None', 'selected from the Python project library');
+    }
   }
 
   b._pendingFixes = fixes;
@@ -4995,6 +5053,7 @@ async function runGeneratePRD() {
       brief = correctLanguageAndScope(idea, brief);
     }
     brief = applyExplicitStackFromIdea(idea, brief);
+    brief = applyPickedIdeaStack(brief);
 
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);

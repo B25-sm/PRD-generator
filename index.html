@@ -2996,6 +2996,64 @@ function syncIdeaInputWithExpandedPrompt(prompt) {
   document.getElementById('char-count').textContent = ta.value.length;
 }
 
+function addTool(existing, tool) {
+  const current = (existing || '').trim();
+  if (!current || /^none$/i.test(current)) return tool;
+  if (new RegExp(`\\b${tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(current)) return current;
+  return `${current}, ${tool}`;
+}
+
+function applyExplicitStackFromIdea(idea, brief) {
+  const text = ' ' + (idea || '').toLowerCase() + ' ';
+  const explicitWebStack = /\bnode(?:\.js|js)?\b|express|mongodb|mongo db|socket\.io|websocket|real[- ]?time|vercel|render|frontend|backend|account|log(?:ging)? in|login|authentication|auth\b/.test(text);
+  if (!explicitWebStack) return brief;
+
+  const b = { ...brief };
+  const fixes = [...(b._pendingFixes || [])];
+  const set = (field, value, reason) => {
+    if ((b[field] || '').trim() !== value) {
+      fixes.push(`${field}: "${b[field] || '(empty)'}" -> "${value}" (${reason})`);
+      b[field] = value;
+    }
+  };
+
+  if (/\bnode(?:\.js|js)?\b/.test(text) && /\bexpress\b/.test(text)) {
+    set('backend', 'Node.js + Express', 'explicitly requested in the idea');
+  } else if (/\bnode(?:\.js|js)?\b/.test(text)) {
+    set('backend', 'Node.js + Express', 'explicit Node.js backend');
+  }
+
+  if (/mongodb|mongo db/.test(text)) {
+    set('database', 'MongoDB 7', 'explicitly requested in the idea');
+  }
+
+  if (/vercel/.test(text) && /render/.test(text)) {
+    set('hosting', 'Vercel (frontend) + Render (backend)', 'explicitly requested in the idea');
+  }
+
+  if (/socket\.io/.test(text)) {
+    const redisExplicit = /\bredis\b/.test(text);
+    const simpleRealtime = /\b(simple|moderate|basic)\b/.test(text);
+    if (!redisExplicit && simpleRealtime) {
+      set('otherTools', 'Socket.IO', 'explicit real-time tool; no Redis requested for this simple/moderate scope');
+    } else {
+      b.otherTools = addTool(b.otherTools, 'Socket.IO');
+    }
+  }
+
+  const needsFrontend = /frontend|vercel|web[- ]?app|web application|real[- ]?time chat|chat application|account|login|authentication/.test(text);
+  if (needsFrontend && (!b.frontend || /none|console|cli/i.test(b.frontend))) {
+    set('frontend', 'React 18 + Vite', 'web UI required but no frontend framework was explicitly named');
+  }
+
+  if (/account|log(?:ging)? in|login|authentication|auth\b/.test(text) && (!b.auth || /none|single local user/i.test(b.auth))) {
+    set('auth', /node|express/i.test(b.backend || '') ? 'JWT + Passport.js' : 'JWT-based authentication', 'accounts/login requested');
+  }
+
+  b._pendingFixes = fixes;
+  return b;
+}
+
 // Legacy web-only expand prompt kept for reference / fallback.
 function buildExpandPromptLegacy(rawIdea) {
   return `A user gave you a project idea. It might be a single vague sentence, a typo-filled one-liner, or a detailed paragraph. Your job is to intelligently expand it into a complete, specific project brief that a developer can work from.
@@ -3226,7 +3284,7 @@ function correctLanguageAndScope(idea, brief) {
   if (!lang) return brief; // no explicit language stated → trust the model's inference
 
   const scriptSig = /\b(script|automat\w+|scraper|scrap(?:e|ing)|\bbot\b|\bcli\b|command[- ]line|\btool\b|utility|parser|convert(?:er|or)?|organi[sz]er|merger|splitter|resizer|renamer|analy[sz]er|downloader|generator|\bcron\b|scheduled)\b/.test(text);
-  const webSig    = /\b(website|web[- ]?app|web application|web[- ]?based|rest api|full[- ]?stack|front[- ]?end|react|vue|angular|next\.?js|svelte|\bnode\b|express|rails|laravel|saas|marketplace|e-?commerce|social (?:media|network)|sign[- ]?up|streamlit|web dashboard)\b/.test(text);
+  const webSig    = /\b(website|web[- ]?app|web application|web[- ]?based|rest api|full[- ]?stack|front[- ]?end|backend|react|vue|angular|next\.?js|svelte|\bnode\b|express|mongodb|mongo db|socket\.io|websocket|real[- ]?time|chat application|messages?|account|log(?:ging)? in|login|authentication|auth\b|vercel|render|rails|laravel|saas|marketplace|e-?commerce|social (?:media|network)|sign[- ]?up|streamlit|web dashboard)\b/.test(text);
 
   if (scriptSig && !webSig) {
     brief.frontend = 'None (console/CLI application)';
@@ -4936,6 +4994,7 @@ async function runGeneratePRD() {
     if (!/console/i.test(brief.frontend || '')) {
       brief = correctLanguageAndScope(idea, brief);
     }
+    brief = applyExplicitStackFromIdea(idea, brief);
 
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);

@@ -5063,6 +5063,22 @@ function validateAllTechFields() {
   return firstInvalid;
 }
 
+function updateConfirmButtonState() {
+  const btn = document.getElementById('confirm-gen-btn');
+  if (!btn) return true;
+  const firstInvalid = validateAllTechFields();
+  if (firstInvalid) {
+    btn.disabled = true;
+    btn.innerHTML = '⚠ Fix highlighted field(s) first';
+    btn.title = 'Fix the highlighted tech-stack field before generating the PRD.';
+    return false;
+  }
+  btn.disabled = false;
+  btn.innerHTML = '⚡ Looks good — Generate Full PRD';
+  btn.title = '';
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════
 //  RENDER EXPANDED BRIEF CARD
 // ═══════════════════════════════════════════════════════════
@@ -5120,7 +5136,7 @@ function renderBriefCard(brief) {
   grid.innerHTML = d.stackFields.map(f => `
     <div class="tech-field">
       <label class="tech-label">${f.label}</label>
-      <input class="tech-input" id="tc-${f.key}" ${f.cat ? `data-cat="${f.cat}"` : ''} oninput="validateTechField('tc-${f.key}');${f.key === 'backend' || f.key === 'auth' ? 'validateStackCombo()' : ''}" placeholder="${f.placeholder}" />
+      <input class="tech-input" id="tc-${f.key}" ${f.cat ? `data-cat="${f.cat}"` : ''} oninput="validateTechField('tc-${f.key}');${f.key === 'backend' || f.key === 'auth' ? 'validateStackCombo();' : ''}updateConfirmButtonState();" placeholder="${f.placeholder}" />
       <div class="tech-error" id="tc-${f.key}-err"></div>
     </div>`).join('');
 
@@ -5133,6 +5149,7 @@ function renderBriefCard(brief) {
 
   // Reset any stale validation state, then validate the freshly inferred values.
   d.stackFields.forEach(f => validateTechField('tc-' + f.key));
+  updateConfirmButtonState();
 
   card.style.display = 'block';
 
@@ -5264,7 +5281,7 @@ async function runGeneratePRD() {
     console.error('Error:', err);
   } finally {
     document.getElementById('gen-btn').disabled = false;
-    document.getElementById('confirm-gen-btn').disabled = false;
+    updateConfirmButtonState();
   }
 }
 
@@ -6457,8 +6474,8 @@ SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a temp
     showError('⚠️ ' + msg + (_currentBrief ? ' Your tech stack above is still saved — click Generate again when ready.' : ''));
     console.error('Error:', err);
   } finally {
-    document.getElementById('confirm-gen-btn').disabled = false;
     document.getElementById('gen-btn').disabled = false;
+    updateConfirmButtonState();
   }
 }
 

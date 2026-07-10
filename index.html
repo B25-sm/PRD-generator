@@ -2569,10 +2569,10 @@ const DOMAINS = {
 Otherwise, infer a sensible, INTERNALLY CONSISTENT web stack. CRITICAL STACK RULES:
 - Auth MUST match backend runtime: Spring Boot → "JWT + Spring Security"; Node/Express → "JWT + Passport.js"; Django → "JWT + Django REST Framework auth"; Next.js + Node backend → "NextAuth.js + JWT" (NextAuth is frontend-only, backend still issues JWT).
 - NEVER pair NextAuth or Passport.js with a Spring Boot or Django backend.
-- ORM must match backend: Spring → JPA/Hibernate; Node → Prisma; Django → Django ORM.
+- Data access must match backend and confirmed fields: Spring → JPA/Hibernate when Spring is confirmed; Django → Django ORM when Django is confirmed; Node → use the confirmed ORM/ODM if one is provided, otherwise describe a generic database access layer.
 - For e-commerce/marketplace/food-delivery apps, include Stripe in otherTools if payments needed, SendGrid for emails, Cloudinary for images.
 - coreFeatures must be concrete user-facing capabilities (not generic "CRUD").
-Always recommend FREE hosting (Vercel, Render, Railway, Supabase, Cloudflare Pages).`,
+Always recommend hosting that matches the confirmed database and the user's requested stack; do not name a host/provider unless it is selected for the final hosting field.`,
     progressSteps: [[16,'Designing system architecture…'],[30,'Writing database schema…'],[45,'Defining API endpoints…'],[58,'Building feature breakdown…'],[70,'Writing auth & security…'],[82,'Writing deployment guide…'],[93,'Finalizing all sections…']],
     build: (b) => buildWebPrompt(b)
   },
@@ -2587,7 +2587,7 @@ Always recommend FREE hosting (Vercel, Render, Railway, Supabase, Cloudflare Pag
       { key: 'dataStore',    label: 'Data Store',        cat: 'warehouse',   desc: 'Where training/feature data lives (e.g. S3 + Parquet, Snowflake, PostgreSQL, BigQuery)', placeholder: 'e.g. S3 + Parquet, Snowflake' },
       { key: 'experiment',   label: 'Experiment Tracking', cat: 'mltrack',  desc: 'Experiment tracking / versioning (e.g. MLflow, Weights & Biases, DVC)', placeholder: 'e.g. MLflow, Weights & Biases' },
       { key: 'serving',      label: 'Serving / Inference', cat: 'mlserve',  desc: 'How the model is served (e.g. FastAPI, BentoML, TorchServe, SageMaker endpoint)', placeholder: 'e.g. FastAPI, BentoML, Triton' },
-      { key: 'compute',      label: 'Compute / Infra',   cat: 'compute',     desc: 'Training/serving compute (e.g. AWS SageMaker, GCP Vertex, single GPU + Docker, Colab)', placeholder: 'e.g. GPU + Docker, SageMaker' },
+      { key: 'compute',      label: 'Compute / Infra',   cat: 'compute',     desc: 'Training/serving compute (e.g. AWS SageMaker, GCP Vertex, single GPU, Colab)', placeholder: 'e.g. single GPU, Colab, SageMaker' },
       { key: 'otherTools',   label: 'Other Tools',       cat: null,          desc: 'Other tools (e.g. Ray, Optuna, LangChain, vector DB like Pinecone) or "None"', placeholder: 'e.g. Ray, Optuna, Pinecone' }
     ],
     expandHint: 'Infer a realistic ML stack: language (usually Python), the right framework for the task (PyTorch/TF for deep learning, scikit-learn/XGBoost for tabular, Hugging Face for NLP/LLM), a data store, experiment tracking, a serving layer, and compute. coreFeatures should be ML capabilities/deliverables (e.g. "Train churn classifier", "Serve real-time inference API", "Nightly retraining").',
@@ -2693,13 +2693,13 @@ const LEVELS = {
 COMPLEXITY LEVEL — BASIC (write this for ${audienceNote}):
 - This PRD will be handed to someone building their FIRST or an early version of this kind of project — treat it as a learning assignment, not a production system.
 - SCOPE: cover only the features actually listed — do not invent extra modules, admin dashboards, analytics, or integrations the user didn't ask for.
-- STACK SIMPLICITY: no microservices, no message queues/background workers, no Redis/caching layer, no WebSockets/real-time, no container orchestration, no multi-environment CI/CD pipeline — UNLESS the feature list genuinely requires one of these. Prefer a single monolith, a single database, and manual/simple deployment steps.
-- AUTH: plain session-based login or a single non-rotating JWT; a basic user/admin role check is enough — no refresh-token rotation, no OAuth providers, no fine-grained permission matrix.
+- STACK SIMPLICITY: no distributed architecture, no queues/workers, no named caching layer, no real-time layer, no container orchestration, no multi-environment CI/CD pipeline — UNLESS the confirmed fields genuinely require one of these. Prefer a single simple app, one persistence layer, and manual/simple deployment steps.
+- AUTH: use the confirmed auth field only. If auth is required but unspecified, keep it beginner-simple; no provider ecosystem, token rotation, or fine-grained permission matrix unless confirmed.
 - DATA: 3-6 tables/entities with simple relationships; skip advanced indexing/caching strategy discussion beyond "index the foreign keys and lookup columns."
 - LANGUAGE: explain every acronym and pattern in plain words the first time it's used — assume the reader is new to professional software engineering. No unexplained jargon.
 - TABLE ROW COUNTS: wherever a section says "(N+ rows)", use roughly HALF of N (or fewer) — only as many rows as this small project genuinely needs. Do not pad tables to look impressive.
 - TESTING: list only the 4-6 most important test cases (core happy paths + the one or two most likely mistakes) — skip elaborate test pyramids, load testing, or chaos testing.
-- DEPLOYMENT: one free-tier host, a short list of manual steps — skip Docker Compose multi-service orchestration and CI/CD pipelines unless trivial (a single lint+test step is fine).
+- DEPLOYMENT: one free-tier host, a short list of manual steps — skip multi-service orchestration and CI/CD pipelines unless explicitly confirmed.
 - PERFORMANCE/OBSERVABILITY: 2-3 sensible numbers is enough; skip SLOs, APM stacks, and load-test tooling.
 - Immediately under the Executive Summary, add a "### What You'll Practice" subsection: 4-6 concrete skills/concepts this project teaches (e.g. OOP encapsulation, CRUD operations, basic REST endpoints, form validation, simple auth, Git basics) — this is what makes it useful as an assigned learning project.
 - Tone: encouraging and clear — this is a project to learn fundamentals on, not to survive production traffic.`
@@ -3073,19 +3073,26 @@ function reconcileBriefForFinalStack(brief, rawIdea) {
 }
 
 function mentionsUnconfirmedTech(text, confirmedText) {
+  return getUnconfirmedTechMentions(text, confirmedText).length > 0;
+}
+
+function getUnconfirmedTechMentions(text, confirmedText) {
   const s = String(text || '').toLowerCase();
   const confirmed = String(confirmedText || '').toLowerCase();
   const techTerms = [
     'react','vite','vue','angular','next.js','nextjs','node','express','nestjs',
     'mongodb','mongo','postgres','postgresql','mysql','sqlite','supabase',
     'spring','thymeleaf','django','flask','fastapi','laravel','rails',
+    'mongoose','prisma','sequelize','typeorm','sqlalchemy','hibernate','jpa',
     'jwt','passport','nextauth','firebase','clerk','auth0','spring security',
-    'vercel','render','railway','netlify','streamlit','docker','kubernetes',
+    'vercel','render','railway','netlify','streamlit','docker','docker compose','kubernetes','cloudflare','github actions',
     'redis','stripe','sendgrid','cloudinary','socket.io','websocket',
+    'axios','react router','context api','redux','zustand','tailwind','bootstrap','react hook form',
+    'uptimerobot','lighthouse','sentry','k6',
     'pandas','numpy','scikit-learn','sklearn','pytorch','tensorflow',
     'power bi','powerbi','tableau','metabase','owasp zap','semgrep','splunk','elk'
   ];
-  return techTerms.some(term => {
+  return techTerms.filter(term => {
     const re = new RegExp('(^|[^a-z0-9.])' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9.]|$)', 'i');
     return re.test(s) && !confirmed.includes(term);
   });
@@ -3158,7 +3165,7 @@ function applyExplicitStackFromIdea(idea, brief) {
 
   const needsFrontend = /frontend|vercel|web[- ]?app|web application|real[- ]?time chat|chat application|account|login|authentication/.test(text);
   if (needsFrontend && (!b.frontend || /none|console|cli/i.test(b.frontend))) {
-    set('frontend', 'React 18 + Vite', 'web UI required but no frontend framework was explicitly named');
+    set('frontend', 'React 18', 'web UI required but no frontend framework was explicitly named');
   }
 
   if (/account|log(?:ging)? in|login|authentication|auth\b/.test(text) && (!b.auth || /none|single local user/i.test(b.auth))) {
@@ -3297,7 +3304,7 @@ function inferWebStack(brief) {
     if (/prisma/i.test(tools)) return 'Prisma';
     if (/sequelize/i.test(tools)) return 'Sequelize';
     if (/typeorm/i.test(tools)) return 'TypeORM';
-    if (/mongoose/i.test(tools) || /mongo/i.test(db)) return 'Mongoose';
+    if (/mongoose/i.test(tools)) return 'Mongoose';
     if (/sqlalchemy/i.test(tools)) return 'SQLAlchemy';
     return defaults.orm;
   };
@@ -3324,16 +3331,16 @@ function inferWebStack(brief) {
   return {
     lang: isTS ? 'TypeScript' : 'JavaScript',
     framework: /express/.test(be) ? 'Express.js' : 'Node.js',
-    orm: pickOrm({ orm: /mongo/i.test(db) ? 'Mongoose' : 'Prisma' }),
+    orm: pickOrm({ orm: /mongo/i.test(db) ? 'MongoDB native driver / document models' : 'No ORM specified; use the confirmed database access layer' }),
     rest: /express/.test(be) ? 'Express.js routes' : 'Node.js HTTP API',
     concepts: /mongo/i.test(db)
-      ? 'Mongoose schemas/models, routes, controllers, middleware, services, validators (Zod/Joi)'
-      : 'Prisma schema/models, routes, controllers, middleware, services, validators (Zod/Joi)'
+      ? 'MongoDB document schemas/collections, routes, controllers, middleware, services, validation rules'
+      : 'routes, controllers, middleware, services, validation rules, database access layer'
   };
 }
 
-// Maps the chosen database to its real DDL syntax / Docker image / connection scheme
-// so Section 6 (schema), Section 13 (Docker Compose), and Section 15 (env vars) never
+// Maps the chosen database to its real DDL syntax / connection scheme
+// so Section 6 (schema), Section 13 (deployment setup), and Section 15 (env vars) never
 // default to Postgres-only syntax (BIGSERIAL, TIMESTAMP WITH TIME ZONE, postgres:16)
 // for a project that actually chose MySQL, SQLite, SQL Server, or MongoDB.
 function inferSqlDialect(database) {
@@ -3601,7 +3608,7 @@ ACCESS_TOKEN_LIFETIME = 15m | REFRESH_TOKEN_LIFETIME = 7d | ROTATE = true | ALGO
 Object-level permission check flow described in prose (no code).`;
 
   const extras = [
-    hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy. Redis group strategy. NO consumer or hook code.` : '',
+    hasRealtime ? `\n## Real-Time Features\nEvent contract table (Event | Direction | Payload Schema | Sender | Receiver). Channel/room naming convention. Client reconnection strategy.${hasCache ? ' Cache/backplane strategy must use the confirmed cache tool only.' : ' Do not name a cache/backplane tool unless it appears in Other Tools.'} NO consumer or hook code.` : '',
     hasTasks    ? `\n## Background Tasks\nTask table (Task Name | Trigger | Inputs | Action | Retry Policy). Cron schedule table (Task | Cron | Purpose) — ONLY list genuinely periodic tasks here; event-triggered tasks (e.g. a welcome email on signup) belong in the task table as event-triggered, NEVER in the cron table. Config reference (broker URL, result backend, concurrency). NO task function bodies.` : '',
     hasCache    ? `\n## Caching Strategy\nCache layer table (Layer | Tool | What Cached | TTL | Invalidation Trigger). Config reference (backend, timeout). Per-endpoint cache policy table.` : '',
   ].filter(Boolean).join('\n');
@@ -3618,27 +3625,28 @@ OUT OF SCOPE: ${brief.outOfScope.join(' | ')}
 DATE: ${today}
 
 STACK ACCURACY — NON-NEGOTIABLE (read ${brief.backend} + ${brief.frontend}):
-- Backend language: ${stack.lang} — NEVER use Java/Python/PHP unless the backend field says so.
+- Source of truth: the confirmed input fields below are authoritative. The expanded prompt describes product intent only; ignore or rewrite any technology, hosting, database, auth, framework, or tooling names inside the expanded prompt if they conflict with the confirmed fields.
+- Backend language: ${stack.lang} — never use another backend language unless it appears in the confirmed backend field.
 - Backend framework: ${stack.framework} — match ${brief.backend} exactly.
-- ORM / data access: ${stack.orm} — NEVER use Spring Data JPA, Hibernate, Django ORM, or Eloquent unless that is the stated backend.
+- ORM / data access: ${stack.orm} — never name another ORM/data-access library unless it appears in the confirmed fields.
 - REST/API layer: ${stack.rest}
-- Frontend is ${brief.frontend}; backend is ${brief.backend}. Do NOT mix Spring/Java concepts into a Node stack or vice versa.
+- Frontend is ${brief.frontend}; backend is ${brief.backend}. Do NOT mix concepts from another backend ecosystem into this stack.
 - Every Tech Stack table row, architecture section, folder tree, and security note MUST reflect this stack only.
-- Auth (backend table + Section 8): "${brief.auth}" exactly — NEVER list NextAuth/Passport in the backend table for Spring Boot; NextAuth is frontend-only on Next.js.
+- Auth (backend table + Section 8): "${brief.auth}" exactly — never name an auth library that is not present in the confirmed Auth field.
 - Architecture: ${isConsole ? 'SINGLE-PROCESS CONSOLE APP — one local program, no client/server split, no API, no separate frontend. Do NOT describe a frontend/backend split, hosting, or deployment architecture anywhere in this document.' : isServerRenderedWeb ? `SERVER-RENDERED MONOLITH — one ${stack.framework} application renders ${brief.frontend} views and handles form/API requests in the same backend deployment. Do NOT describe a separate Vercel/static frontend.` : `MONOLITH — one ${stack.framework} API + separate ${brief.frontend} frontend deployed independently. Do NOT describe as "microservices" unless the user explicitly requested microservices.`}
 - Production Architecture diagram database MUST be "${dbHost}" — do not substitute any other database host unless the database or hosting field says so.
 - Hosting/database consistency: the database host in architecture, deployment, environment variables, and setup steps must match the confirmed Database and Hosting fields exactly. Do not name a different database host.
 - "Why Chosen" column: ONE specific sentence per row explaining why THIS technology fits THIS project — NEVER repeat generic filler like "Easy to use and highly configurable".
-- State management: pick ONE library (Context API OR Redux OR Zustand) and use it consistently in Sections 2, 5, 8, and 9 — never contradict yourself across sections.
+- State management: use only the state/tooling explicitly named in the confirmed Frontend or Other Tools fields. If none is named, describe framework-native/local component state without naming an extra library.
 - NO DUPLICATION: each list, table, checklist, and subsection appears exactly ONCE. Never repeat the same items in both prose and bullets, or as both a numbered list and an unnumbered list. Build Order uses ONLY \`- [ ]\` checkbox lines — no duplicate plain-bullet lists.
-${isConsole ? `- NO DATABASE: this is a local console app with file-based persistence, not a real database — never mention PostgreSQL/MySQL/MongoDB/SQL of any kind anywhere in this document.` : `- DATABASE DIALECT — NON-NEGOTIABLE: the database is ${dialect.dialectName}. ${dialect.kind === 'mongo'
-    ? 'Section 6 MUST use Mongoose/MongoDB document schema (fields, types, refs, indexes) — NEVER SQL CREATE TABLE syntax.'
-    : `Section 6's DDL MUST use ${dialect.dialectName}-valid syntax ONLY: primary keys as ${dialect.pkType}, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}. NEVER use another dialect's syntax (e.g. no BIGSERIAL/TIMESTAMP WITH TIME ZONE unless the database is genuinely PostgreSQL; no AUTO_INCREMENT/DATETIME unless it's genuinely MySQL/MariaDB).`}
-  Section 13's Docker Compose and Section 15's DATABASE_URL/connection string MUST match this same dialect (${dialect.dockerImage ? `db image "${dialect.dockerImage}"` : 'no separate db container — mount the file-based database as a volume'}, scheme "${dialect.connScheme}") — never default to Postgres for a non-Postgres database.`}
+${isConsole ? `- NO DATABASE: this is a local console app with file-based persistence, not a real database — never mention any real database product, managed database host, or SQL anywhere in this document.` : `- DATABASE DIALECT — NON-NEGOTIABLE: the database is ${dialect.dialectName}. ${dialect.kind === 'mongo'
+    ? 'Section 6 MUST use MongoDB document/collection schema (fields, types, refs, indexes) — NEVER SQL CREATE TABLE syntax and NEVER name an ORM/ODM unless it appears in the confirmed fields.'
+    : `Section 6's DDL MUST use ${dialect.dialectName}-valid syntax ONLY: primary keys as ${dialect.pkType}, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}. NEVER use another database dialect's syntax.`}
+  Section 13 deployment setup and Section 15 database connection string MUST match this same dialect (connection scheme "${dialect.connScheme}") — never default to another database.`}
 - FIELD NAME CONSISTENCY: a column/field referring to the same concept (e.g. a product reference inside order_items) MUST use the IDENTICAL name in the Database Schema, API request fields, and Business Rules — pick one name (e.g. product_id) and never rename it between sections (e.g. item_id in the schema vs product_id in the API).
 - OWNERSHIP CONSISTENCY: if Section 8's Permission Model defines an "Owner" role for a resource (e.g. products, posts), Section 6's schema for that resource MUST include the user-reference FK that makes ownership checkable (e.g. seller_id, author_id, owner_id) — never grant an Owner permission the schema can't actually enforce.
 - FEATURE COVERAGE: every item in FEATURES above must show up as concrete schema tables, API endpoints, or UI routes — never silently drop a stated feature. If a feature implies a multi-step workflow (e.g. "cart management" implies add-to-cart THEN checkout, not a single-step purchase), the schema and API must support that actual workflow.
-${isNext ? `- Next.js frontend rules: App Router (NOT React Router); built-in bundler (NOT standalone Webpack/Vite); env vars use NEXT_PUBLIC_* (NEVER VITE_*); dev port 3000 (NOT 5173).` : ''}
+${isNext ? `- Next.js frontend rules: use built-in routing/bundling concepts only; do not name unconfirmed routing/build tools, env-var prefixes, or dev-server ports.` : ''}
 ${(isFood || isEcom) ? `- Domain schema REQUIRED: include menu_items/products, order_items line-items, orders.status column${hasStripe ? ', payments table + Stripe checkout/webhook endpoints' : ''}. API must cover browse menu, place order, track status. orders.status values must fit THIS domain (e.g. pending/paid/shipped/delivered/cancelled for e-commerce; pending/confirmed/preparing/delivered/cancelled only for genuine food delivery) — do not default to food-delivery vocabulary for a non-food store.${hasCartFeature ? ' Cart management is a stated feature: include a cart (or cart_items) table/endpoints (add/remove/view) and a checkout endpoint that converts the cart into an order with its order_items — even without Stripe, mark the order paid/placed via a simple status or is_paid flag; never skip straight from "browse" to "single-item order" when cart management was requested.' : ''}${hasOwnerRole ? ' This is a multi-seller/marketplace project: products MUST reference the selling user (seller_id FK) so per-seller ownership and listings can be enforced.' : ''}` : `- NOT food/e-commerce: do NOT add menu_items, order_items, orders, or restaurant/delivery tables unless the user explicitly asked for them.`}
 ${hasStripe ? `- Stripe MUST appear in: Backend or Infrastructure table, payments/checkout API endpoints, payments DB table, STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET env vars.` : ''}
 ${/cloudinary/i.test(brief.otherTools || '') ? `- Cloudinary MUST appear in: image URL columns in schema, upload endpoint, CLOUDINARY_* env vars.` : ''}
@@ -3660,15 +3668,15 @@ ${lvl.id === 'basic' ? '### What You\'ll Practice\n4-6 concrete skills/concepts 
 ## 2. Tech Stack Overview
 ### Backend
 | Layer | Technology | Version | Purpose | Why Chosen |
-${isConsole ? `(3-5 rows for a plain ${stack.lang} console app: language, core collections/data structures used, file I/O approach for persistence, build tool. NO framework, ORM, REST layer, auth, or hosting rows — none of those exist in a local console program.)` : `(8+ rows for ${stack.lang} + ${stack.framework}: Language=${stack.lang}, Framework=${stack.framework}, ORM=${stack.orm}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, email, hosting${hasRealtime ? ', WebSocket' : ''}${hasTasks ? ', task queue, broker' : ''}. The ORM row MUST be ${stack.orm} — not Prisma unless the ORM is actually Prisma, not Hibernate/JPA/Django ORM unless backend is Java/Spring or Django.)`}
+${isConsole ? `(3-5 rows for a plain ${stack.lang} console app: language, core collections/data structures used, file I/O approach for persistence, build tool. NO framework, ORM, REST layer, auth, or hosting rows — none of those exist in a local console program.)` : `(Rows for confirmed backend stack only: Language=${stack.lang}, Framework=${stack.framework}, REST=${stack.rest}, auth from ${brief.auth}, DB=${brief.database}, hosting from ${brief.hosting}${hasRealtime ? ', real-time layer only if confirmed in tools/features' : ''}${hasTasks ? ', background task concept only if confirmed in tools/features' : ''}. ORM/data-access row MUST be "${stack.orm}" and must not name any unconfirmed ORM/ODM/library.)`}
 ### Frontend
 ${isConsole ? `N/A — no separate frontend/UI framework; all interaction happens through the terminal. State this in one sentence instead of a table.` : isServerRenderedWeb ? `| Layer | Technology | Version | Purpose | Why Chosen |
-(6+ rows for server-rendered UI: template engine from ${brief.frontend}, backend route/controller layer, server-side validation, Bootstrap/Tailwind or plain CSS, minimal JavaScript/progressive enhancement, form handling, template testing. Do NOT include React/Vite/SPA routing/state management.)` : `| Layer | Technology | Version | Purpose | Why Chosen |
-(8+ rows: language, framework, build tool, router, state, styling, forms, HTTP client, testing)`}
+(Rows for server-rendered UI using only ${brief.frontend} and confirmed fields. For styling/forms/testing, use generic descriptions unless a specific tool is confirmed. Do NOT include unconfirmed SPA routing/state/build tools.)` : `| Layer | Technology | Version | Purpose | Why Chosen |
+(Rows for confirmed frontend stack only. Include build tool, router, state, styling, forms, HTTP client, and testing ONLY if those exact tools appear in Frontend or Other Tools; otherwise use generic "framework built-in/native browser" wording without naming a product.)`}
 ### Infrastructure
 ${isConsole ? `N/A — a local console application needs no containerization, CI/CD, hosting, or monitoring. State this in one sentence instead of a table.` : isServerRenderedWeb ? `| Service | Technology | Purpose |
-(containerization, CI/CD, single backend app host for both pages and API/actions, managed database, Redis/cache if used, monitoring. Do NOT add a separate frontend host.)` : `| Service | Technology | Purpose |
-(containerization, CI/CD, backend host, frontend host, proxy, monitoring)`}
+(Rows only for confirmed hosting/database/cache/tools. Do NOT add containerization, CI/CD, proxy, monitoring, or a separate frontend host unless named in confirmed fields.)` : `| Service | Technology | Purpose |
+(Rows only for confirmed frontend host, backend host, database host, and tools. Do NOT add containerization, CI/CD, proxy, monitoring, or CDN unless named in confirmed fields.)`}
 
 ## 3. System Architecture
 ${isConsole ? `Single-process console application: one ${stack.lang} program reads input from the terminal, operates on in-memory data structures, and persists them to a local file. 2-sentence rationale — no client/server split, no network layer, no microservices.
@@ -3697,7 +3705,7 @@ ${isConsole ? 'src/ file tree — ONLY source files you author, each with a ← 
 \`\`\`
 ### ${isConsole ? 'OOP Concepts Reference' : 'Framework Concepts Reference'}
 | Concept | Definition | Role in ${brief.projectName} | Key File |
-${isConsole ? `(4-6 rows: the classes/objects used, encapsulation, the main program loop, file I/O approach — NOT framework/ORM concepts, there is no framework.)` : `(10+ rows for ${stack.framework}: ${stack.concepts}. Use ${stack.orm} terminology — NOT Spring/JPA/Hibernate unless backend is Spring Boot.)`}
+${isConsole ? `(4-6 rows: the classes/objects used, encapsulation, the main program loop, file I/O approach — NOT framework/ORM concepts, there is no framework.)` : `(10+ rows for ${stack.framework}: ${stack.concepts}. Use only the confirmed ${stack.orm} terminology; do not name another backend ecosystem.)`}
 ### Data Modeling Approach
 ${isConsole ? 'Entity design philosophy: what fields each class holds, how entities reference each other in memory (e.g. a list of Loan objects each holding a reference to a Book and a Member), no FK/M2M/soft-delete concepts — those are database terms.' : 'Entity design philosophy: naming conventions, relationship strategy (FK/M2M/embedded), soft-delete pattern.'}
 
@@ -3719,9 +3727,9 @@ src/ file tree — every folder with ← responsibility comment
 
 ## 6. Database Schema
 ${isConsole ? `\`\`\`
-Describe the file-based persistence format (e.g. one line per record in a CSV/text file, Java object serialization, or Python JSON/pickle). For each entity: field name, type, and how it's delimited/parsed. This is NOT a real database — no CREATE TABLE, no Mongoose schema, no SQL of any kind.
+Describe the file-based persistence format (e.g. one line per record in a CSV/text file, Java object serialization, or Python JSON/pickle). For each entity: field name, type, and how it's delimited/parsed. This is NOT a real database — no CREATE TABLE, no ORM/ODM schema, no SQL of any kind.
 \`\`\`` : dialect.kind === 'mongo' ? `\`\`\`javascript
-Mongoose schema for every collection: field, type, required, unique, default, ref (for relationships), timestamps: true. NOT SQL — this project uses MongoDB, never CREATE TABLE.
+MongoDB document schema for every collection: field, type, required, unique, default, refs/embedded relationships, timestamps. NOT SQL — this project uses MongoDB, never CREATE TABLE. Do not name an ORM/ODM unless it appears in the confirmed fields.
 \`\`\`` : `\`\`\`sql
 Full CREATE TABLE DDL for every entity, in valid ${dialect.dialectName} syntax ONLY: primary keys as ${dialect.pkType}, VARCHAR(255), TEXT, timestamps as ${dialect.tsType}, booleans as ${dialect.boolType}, NOT NULL, UNIQUE, DEFAULT, CHECK, FOREIGN KEY ... ON DELETE ..., PRIMARY KEY. Then CREATE INDEX for every FK and filter column.
 CRITICAL ORDERING: A table must be created AFTER every table it references with a FOREIGN KEY. Emit independent tables first, then dependent ones (dependency order), so the script runs top-to-bottom without errors.
@@ -3810,7 +3818,7 @@ Separate DB setup, mocked external services, seed data strategy.`}
 
 ## 12. Security Checklist
 ${isConsole ? `| Concern | Mitigation | Implementation Detail | Priority |
-(3-5 rows relevant ONLY to a local console app — e.g. input validation to prevent crashes on malformed input, safe file I/O error handling, no plaintext password storage if a login step exists. Do NOT include SQL Injection, XSS, CSRF, CORS, HTTPS/HSTS, or JWT theft — none of them apply to a program with no network layer.)` : `| Threat | Mitigation | Implementation Detail | Priority |
+(3-5 rows relevant ONLY to a local console app — e.g. input validation to prevent crashes on malformed input, safe file I/O error handling, no plaintext password storage if a login step exists. Do NOT include web/API security threats or token-theft topics — none of them apply to a program with no network layer.)` : `| Threat | Mitigation | Implementation Detail | Priority |
 | SQL Injection | ORM parameterized queries | All DB access via ${stack.orm}; raw SQL banned | P0 |
 | XSS | Output escaping + CSP header | Framework escapes by default; CSP blocks inline scripts | P0 |
 | CSRF | SameSite=Strict cookie | Refresh cookie: SameSite=Strict; CSRF middleware enabled | P0 |
@@ -3829,53 +3837,53 @@ ${isConsole ? `N/A — no hosting, containers, or CI/CD are needed for a local c
 [Exact commands to compile/package and run locally from source — e.g. javac + java, or mvn package then java -jar app.jar; or python main.py. Include both "run from source" and "produce a distributable artifact" if applicable.]
 \`\`\`
 ### Distribution
-How someone else obtains and runs this program (e.g. share the .jar/.py file, or list the runtime prerequisite like a JDK/Python version).` : isServerRenderedJava ? `### Development (Docker Compose)
+How someone else obtains and runs this program (e.g. share the .jar/.py file, or list the runtime prerequisite like a JDK/Python version).` : isServerRenderedJava ? `### Development Setup
 \`\`\`yaml
-[docker-compose.yml: mysql (${dialect.dockerImage || 'mysql:8'}) with env vars ${dialect.dockerEnvVars.join(', ')}, ${hasCache ? 'redis (redis:7-alpine), ' : ''}spring-boot-app (single service exposing port 8080 and serving Thymeleaf views). Volumes, depends_on, healthchecks.]
+[Use only confirmed services: ${brief.hosting}, ${brief.database}${hasCache ? ', confirmed cache tool' : ''}. If container tooling is not confirmed, do not name any container tool.]
 \`\`\`
 ### Production Architecture
 \`\`\`
-Internet → Cloudflare → ${beHost} (Spring Boot + Thymeleaf app)
+Internet → ${beHost} (Spring Boot + Thymeleaf app)
                       → ${dbHost} (managed DB, free tier)
 ${hasCache ? `                      → Redis (managed cache)` : ''}
 \`\`\`
-### CI/CD (GitHub Actions)
+### CI/CD
 \`\`\`yaml
-[.github/workflows/deploy.yml: on PR → test; on main → build JAR + deploy Spring Boot app + migrate DB + health check + notify]
+[Describe CI/CD only if a CI tool is confirmed; otherwise state manual deployment verification steps without naming a CI product.]
 \`\`\`
 ### Deployment Steps
 \`\`\`bash
-[Every command: git clone → env setup → DB provision → Redis provision if used → build JAR → deploy Spring Boot service → verify live URL on ${brief.hosting}]
-\`\`\`` : isServerRenderedPython ? `### Development (Docker Compose)
+[Every command: git clone → env setup → DB provision → confirmed cache provision if used → build JAR → deploy Spring Boot service → verify live URL on ${brief.hosting}]
+\`\`\`` : isServerRenderedPython ? `### Development Setup
 \`\`\`yaml
-[docker-compose.yml: ${dialect.dockerImage ? `db (${dialect.dockerImage}) with env vars ${dialect.dockerEnvVars.join(', ')}` : 'sqlite volume mounted into the app'}, ${hasCache ? 'redis (redis:7-alpine), ' : ''}python-web-app (single Flask/FastAPI service exposing port 8000 and serving Jinja/templates). Volumes, depends_on, healthchecks.]
+[Use only confirmed services: ${brief.hosting}, ${brief.database}${hasCache ? ', confirmed cache tool' : ''}. If container tooling is not confirmed, do not name any container tool.]
 \`\`\`
 ### Production Architecture
 \`\`\`
-Internet → Cloudflare → ${beHost} (${serverRenderedLabel} app)
+Internet → ${beHost} (${serverRenderedLabel} app)
                       → ${dbHost} (managed DB, free tier)
 ${hasCache ? `                      → Redis (managed cache)` : ''}
 \`\`\`
-### CI/CD (GitHub Actions)
+### CI/CD
 \`\`\`yaml
-[.github/workflows/deploy.yml: on PR → lint + test; on main → build Python app + deploy backend service + migrate DB + health check + notify]
+[Describe CI/CD only if a CI tool is confirmed; otherwise state manual deployment verification steps without naming a CI product.]
 \`\`\`
 ### Deployment Steps
 \`\`\`bash
-[Every command: git clone → env setup → DB provision → Redis provision if used → deploy Python web service → verify live URL on ${brief.hosting}]
-\`\`\`` : `### Development (Docker Compose)
+[Every command: git clone → env setup → DB provision → confirmed cache provision if used → deploy Python web service → verify live URL on ${brief.hosting}]
+\`\`\`` : `### Development Setup
 \`\`\`yaml
-[docker-compose.yml: ${dialect.dockerImage ? `db (${dialect.dockerImage}) with env vars ${dialect.dockerEnvVars.join(', ')}` : 'NO separate db container — SQLite is a local file, mount it as a volume into the backend service instead'}, ${hasCache ? 'redis (redis:7-alpine), ' : ''}backend (port 8000), frontend (port 5173)${hasTasks ? ', worker, beat' : ''}. Volumes, depends_on, healthchecks.]
+[Use only confirmed services: frontend/backend/database hosts from ${brief.hosting}; database ${brief.database}; tools ${brief.otherTools || 'None'}. If container tooling is not confirmed, do not name any container tool. If no frontend build tool is confirmed, do not name a dev-server port.]
 \`\`\`
 ### Production Architecture
 \`\`\`
-Internet → Cloudflare → ${feHost} (frontend static)
+Internet → ${feHost} (frontend)
                       → ${beHost} (API server)
                       → ${dbHost} (managed DB, free tier)
 \`\`\`
-### CI/CD (GitHub Actions)
+### CI/CD
 \`\`\`yaml
-[.github/workflows/deploy.yml: on PR → lint + test; on main → build + deploy + migrate + health check + notify]
+[Describe CI/CD only if a CI tool is confirmed; otherwise state manual deployment verification steps without naming a CI product.]
 \`\`\`
 ### Deployment Steps
 \`\`\`bash
@@ -3890,30 +3898,29 @@ ${isConsole ? `| Metric | Target | How Measured |
 ### Optimization Techniques
 | Area | Technique | Gain |
 (1-2 rows relevant to in-memory/file operations, e.g. choosing the right collection type for lookups, buffered file I/O)` : `| Metric | Target | How Measured |
-| API p95 latency | < 200ms | APM / UptimeRobot |
-| Page LCP | < 2.5s | Lighthouse CI |
-| Time to Interactive | < 4.0s | Lighthouse CI |
+| API p95 latency | < 200ms | Confirmed host metrics or generic request logs |
+| Page LCP | < 2.5s | Browser performance audit |
+| Time to Interactive | < 4.0s | Browser performance audit |
 | DB query p95 | < 50ms | Slow query log |
-| Concurrent users | 500 (v1) | k6 load test |${hasRealtime ? '\n| WebSocket latency | < 100ms | Ping/pong probe |' : ''}
+| Concurrent users | 500 (v1) | Generic load test |${hasRealtime ? '\n| WebSocket latency | < 100ms | Ping/pong probe |' : ''}
 ### Optimization Techniques
 | Area | Technique | Gain |
-(DB indexes, ${hasCache ? 'Redis cache TTLs, ' : ''}N+1 prevention, code splitting, CDN, connection pooling)`}
+(DB indexes, ${hasCache ? 'confirmed cache TTLs, ' : ''}N+1 prevention, frontend bundle splitting if applicable, connection pooling; do not name CDN/cache vendors unless confirmed)`}
 
 ## 15. Environment Variables
 ${isConsole ? `N/A — a local console application needs no environment variables or secrets.${/multi-user|login|password/i.test(featAll) ? ' If a local config value is needed (e.g. the data file path), mention it as a simple constant in the code, not an env var.' : ''}` : `| Variable | Example Value | Description | Required | Service |
-(12+ rows: SECRET_KEY, DATABASE_URL, ${hasCache ? 'REDIS_URL, ' : ''}JWT_SECRET, EMAIL credentials, STORAGE credentials, VITE_API_URL, SENTRY_DSN${hasRealtime ? ', WS_URL' : ''})`}
+(Rows only for confirmed services and auth/tools: app secret, database connection, ${hasCache ? 'confirmed cache URL, ' : ''}${/jwt/i.test(brief.auth || '') ? 'JWT secret, ' : ''}confirmed email/payment/storage credentials, frontend API URL if a separate frontend exists${hasRealtime ? ', WebSocket URL' : ''}. Do not name any unconfirmed env-var provider/tool.)`}
 
 ## 16. Project Folder Structure
 \`\`\`
 ${isConsole ? `project-root/
 ├── src/         ← ${stack.lang} source files
 └── data/        ← local data file(s) used for persistence
-[Expand only source subdirectories with ├── └── notation and ← comments — a single-module console app, no backend/frontend/nginx/docker split. Keep under ~25 lines.]` : `project-root/
+[Expand only source subdirectories with ├── └── notation and ← comments — a single-module console app, no backend/frontend/deployment split. Keep under ~25 lines.]` : `project-root/
 ├── backend/     ← ${brief.backend} app
 ├── frontend/    ← ${brief.frontend} app
-├── nginx/       ← reverse proxy config
-├── .github/workflows/  ← CI/CD pipelines
-├── docker-compose.yml
+├── deployment/  ← deployment config only for confirmed hosting/tools
+├── automation/  ← CI/CD files only if a CI tool is confirmed
 └── .env.example
 [Expand only source subdirectories with ├── └── notation and ← comments. Never expand .idea/.vscode/node_modules/target/build/.git — collapse each to one line. Keep under ~40 lines total.]`}
 \`\`\`
@@ -4063,7 +4070,7 @@ project-root/
 │   └── pipelines/   ← orchestration DAGs
 ├── configs/         ← yaml hyperparams
 ├── tests/
-└── ${'Dockerfile'}
+└── deployment-config/ ← deployment files only if a deployment/container tool is confirmed
 [expand every folder with ← comments]
 \`\`\`
 ### Build Order / Checklist
@@ -5265,7 +5272,7 @@ async function runGeneratePRD() {
 function domainSystemExtra(d) {
   const common = `\n\nFOLLOW THE EXACT SECTION STRUCTURE in the user message — same headings, same order, every table populated with real rows. COVER EVERY TOOL listed in the STACK — each must appear in the relevant sections, never silently dropped.`;
   if (d.id === 'web') {
-    return common + `\n\nDOMAIN = FULLSTACK WEB. Use the confirmed Hosting field only; never introduce an unconfirmed host or database provider. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer (HTTP clients like Axios → Frontend; ORMs → Backend). CRITICAL: The ORM and backend language MUST match the stated backend — Node.js + Express + MongoDB → Mongoose; Spring Boot → JPA/Hibernate (Java); Django → Django ORM (Python). NEVER inject Spring/JPA/Hibernate into a Node stack or Express concepts into a Java stack.`;
+    return common + `\n\nDOMAIN = FULLSTACK WEB. Use the confirmed Hosting field only; never introduce an unconfirmed host or database provider. SQL CREATE TABLE statements MUST be in foreign-key dependency order. Place every technology in its correct layer. CRITICAL: the ORM/data-access layer and backend language MUST match the stated backend and confirmed fields. If no ORM/ODM is confirmed, describe the data-access layer generically without naming a library. NEVER inject concepts from a different backend ecosystem.`;
   }
   switch (d.id) {
     case 'ml':
@@ -5310,6 +5317,17 @@ function localPRDAudit(brief, md) {
   const issues = [];
   const text = md || '';
   const dom = brief.domain || 'web';
+  const auditDomain = getDomain(brief.domain || currentDomainId);
+  const confirmedText = auditDomain.stackFields.map(f => brief[f.key] || '').join(' | ');
+  const unconfirmed = getUnconfirmedTechMentions(text, confirmedText);
+  if (unconfirmed.length) {
+    issues.push({
+      severity: 'critical',
+      where: 'Confirmed Input Fields',
+      problem: `Generated PRD mentions unconfirmed technology: ${unconfirmed.slice(0, 12).join(', ')}.`,
+      fix: 'Remove or replace those names. Only technologies present in the confirmed input fields may appear in the PRD.'
+    });
+  }
 
   if (dom === 'web') {
     const stack = inferWebStack(brief);
@@ -5358,7 +5376,7 @@ function localPRDAudit(brief, md) {
 
     // Mongo + relational SQL DDL mismatch
     if (/mongo/i.test(db) && /CREATE TABLE/i.test(text)) {
-      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Database is MongoDB but the schema uses SQL CREATE TABLE statements.', fix: 'Use MongoDB collection/document schema (Mongoose models), not SQL DDL.' });
+      issues.push({ severity: 'critical', where: 'Database Schema', problem: 'Database is MongoDB but the schema uses SQL CREATE TABLE statements.', fix: 'Use MongoDB collection/document schema, not SQL DDL. Only name an ODM if it appears in the confirmed fields.' });
     }
 
     // Framework-bound auth libraries must match the backend runtime.
@@ -5411,7 +5429,7 @@ function localPRDAudit(brief, md) {
       issues.push({ severity: 'critical', where: 'Environment Variables', problem: 'Next.js uses NEXT_PUBLIC_* env vars, not VITE_*.', fix: 'Replace VITE_API_URL with NEXT_PUBLIC_API_URL; remove Vite-specific config.' });
 
     if (/next\.js|nextjs/.test(feStr) && /\b5173\b/.test(text) && !/5173.*note/i.test(text))
-      issues.push({ severity: 'minor', where: 'Deployment', problem: 'Port 5173 is Vite default; Next.js dev server runs on 3000.', fix: 'Use port 3000 for Next.js frontend in docker-compose and deployment.' });
+      issues.push({ severity: 'minor', where: 'Deployment', problem: 'Port 5173 is Vite default; Next.js dev server runs on 3000.', fix: 'Use the confirmed frontend runtime/deployment settings and avoid unconfirmed build-tool ports.' });
 
     if (/microservices?\s+architect|utilize a microservices|microservice-based/i.test(text))
       issues.push({ severity: 'critical', where: 'System Architecture', problem: 'Describes microservices but stack is a single monolith backend + frontend.', fix: 'Describe as monolith: one API service + separate frontend deployment.' });
@@ -5420,7 +5438,7 @@ function localPRDAudit(brief, md) {
       issues.push({ severity: 'critical', where: 'Production Architecture', problem: `Document mentions Supabase but database is "${brief.database}".`, fix: 'Use MongoDB Atlas / confirmed MongoDB hosting wording instead of Supabase.' });
 
     if (/mongo/i.test(db) && /\bprisma schema\b|\bprisma client\b/i.test(text))
-      issues.push({ severity: 'critical', where: 'Backend Architecture', problem: 'MongoDB stack should use Mongoose terminology, but the PRD mentions Prisma.', fix: 'Replace Prisma schema/client references with Mongoose schema/model references.' });
+      issues.push({ severity: 'critical', where: 'Backend Architecture', problem: 'MongoDB stack should not mention Prisma unless Prisma is confirmed.', fix: 'Replace Prisma schema/client references with MongoDB document-model wording, or with the confirmed ODM only if one is listed in the input fields.' });
 
     if (/postgres/i.test(db) && !/supabase/.test(db) && /\bsupabase\b/i.test(text))
       issues.push({ severity: 'critical', where: 'Production Architecture', problem: `Diagram/text mentions Supabase but database is "${brief.database}".`, fix: `Use "${brief.database}" consistently in all architecture references.` });
@@ -6024,11 +6042,13 @@ function applyLocalFixes(brief, md) {
   out = fixGenericFiller(brief, out);
 
   if (/mongo/.test(db)) {
+    const confirmed = getDomain(brief.domain || currentDomainId).stackFields.map(f => brief[f.key] || '').join(' | ');
+    const mongoModelName = /mongoose/i.test(confirmed) ? 'Mongoose' : 'MongoDB document model';
     out = out.replace(/\bSupabase\s*\(DB\)/gi, 'MongoDB Atlas (DB)');
     out = out.replace(/\bSupabase\b/gi, 'MongoDB Atlas');
-    out = out.replace(/\bPrisma schema\b/gi, 'Mongoose schema');
-    out = out.replace(/\bPrisma client\b/gi, 'Mongoose model API');
-    out = out.replace(/\bPrisma\b/gi, 'Mongoose');
+    out = out.replace(/\bPrisma schema\b/gi, `${mongoModelName} schema`);
+    out = out.replace(/\bPrisma client\b/gi, `${mongoModelName} API`);
+    out = out.replace(/\bPrisma\b/gi, mongoModelName);
   }
 
   // Microservices language on a monolith stack → monolith (the template forces
@@ -6341,7 +6361,7 @@ WHAT BELONGS IN A PRD (write this):
 - Security requirements: what must be enforced and why, with the specific mechanism named
 - Performance targets: p95 latency, throughput, caching TTLs
 - Build checklist: what to build, in what order, with file names — not how to write each function
-- Setup commands: git clone, npm install, docker-compose up — these are fine
+- Setup commands are fine, but name only tools that appear in the confirmed fields; otherwise use generic install/run/deploy commands.
 - Deployment steps: platform-specific commands to go live — these are fine
 - Environment variables table: name, example value, description
 
@@ -6380,7 +6400,7 @@ OUTPUT RULES:
 - FOLDER TREES: show ONLY source files and folders a developer actually authors. NEVER expand generated, IDE, build, dependency, or VCS metadata directories — .idea/, .vscode/, .git/, node_modules/, target/, build/, dist/, .gradle/, .mvn/, __pycache__/, venv/, coverage/. Show each of those (if shown at all) as a SINGLE collapsed line, e.g. "├── .idea/    ← IDE config (git-ignored)". Do NOT list files like Project_Default.xml, workspace.xml, or numbered variants. Keep every tree under ~40 lines total. NEVER repeat near-identical filenames (e.g. file_1, file_2, file_3…) — that is a generation error; list at most 2 examples then stop.
 - Prefer free or low-cost tiers wherever the project reasonably allows.
 - COVER EVERY TECHNOLOGY in the provided STACK and TOOLS lists. Each one MUST appear in the Tech Stack tables AND be reflected wherever it is relevant — e.g. a payment tool (Stripe) requires payment/checkout endpoints in the API spec, a payments/transactions table in the schema, and its keys in Environment Variables; an email tool requires its credentials in Environment Variables. Never silently drop a tool the user specified.
-- ACCURACY: Place every technology in its correct layer (e.g. Axios and other HTTP clients belong to the Frontend; ORMs belong to the Backend). Do not invent technologies that were not requested or implied.
+- ACCURACY: Place every confirmed technology in its correct layer. Do not invent technologies that are not present in the confirmed input fields.
 - SQL: CREATE TABLE statements MUST be ordered so any table referenced by a FOREIGN KEY is defined before the table referencing it.
 
 SPECIFICITY — NO GENERIC FILLER (this is what separates a real PRD from a template):
@@ -6646,8 +6666,8 @@ function buildFallbackBrief(idea) {
     outOfScope: ['Out-of-scope item 1', 'Out-of-scope item 2']
   };
   const defaults = {
-    web:          { frontend: 'React 18 + Vite', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier', otherTools: 'None' },
-    ml:           { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI + Docker', compute: 'Single GPU + Docker', otherTools: 'None' },
+    web:          { frontend: 'React 18', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + PostgreSQL (DB) — all free tier', otherTools: 'None' },
+    ml:           { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI', compute: 'Single GPU or CPU runtime', otherTools: 'None' },
     datasci:      { language: 'Python 3.11', libraries: 'pandas, NumPy, scikit-learn, statsmodels', dataSource: 'PostgreSQL', notebook: 'Jupyter', viz: 'matplotlib, seaborn', compute: 'Local + Colab', otherTools: 'None' },
     dataanalysis: { language: 'SQL + Python', dataSource: 'PostgreSQL', transform: 'SQL + dbt', bi: 'Metabase', otherTools: 'Excel' },
     security:     { targetSystem: 'Web app + REST API', language: 'Python', securityTools: 'OWASP ZAP, Trivy, Semgrep', siem: 'ELK', compliance: 'OWASP Top 10', hosting: 'AWS', otherTools: 'None' }

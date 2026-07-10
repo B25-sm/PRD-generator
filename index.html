@@ -2959,6 +2959,21 @@ ${stackLines},
 
 function buildExpandedPromptFromBrief(brief, rawIdea) {
   const d = getDomain((brief && brief.domain) || currentDomainId);
+  const cleanSentence = s => String(s || '').trim().replace(/[.!?]+$/,'');
+  if (isConsoleBrief(brief || {})) {
+    const subject = consoleSubject(brief || {}, rawIdea);
+    const features = Array.isArray(brief && brief.coreFeatures)
+      ? brief.coreFeatures.filter(Boolean).join(', ')
+      : '';
+    return [
+      `Create ${brief.projectName || 'a management system'} as a local ${brief.backend || 'programming'} console/CLI application for ${brief.targetUsers || 'the intended users'}.`,
+      `The application should help users manage ${subject} through terminal menus, without a browser UI, network API, cloud deployment, or shared login system.`,
+      brief.coreProblem ? `It should solve this problem: ${cleanSentence(brief.coreProblem)}.` : '',
+      features ? `Core menu operations should include ${features}.` : `Core menu operations should include adding, updating, deleting, searching, listing, and saving ${subject}.`,
+      `Use file-based persistence such as CSV or JSON files, keep user accounts out of scope unless the user explicitly asks for a local password check, and run the program locally from the terminal.`
+    ].filter(Boolean).join(' ');
+  }
+
   const stack = d.stackFields
     .map(f => brief && brief[f.key] ? `${f.label}: ${brief[f.key]}` : '')
     .filter(Boolean)
@@ -2976,7 +2991,7 @@ function buildExpandedPromptFromBrief(brief, rawIdea) {
   return [
     `Build ${brief.projectName || 'a software project'} as a ${brief.appType || d.label} for ${brief.targetUsers || 'the intended users'}.`,
     brief.oneLiner || `The project should turn the idea "${rawIdea}" into a clear, usable product.`,
-    brief.coreProblem ? `It should solve this problem: ${brief.coreProblem}.` : '',
+    brief.coreProblem ? `It should solve this problem: ${cleanSentence(brief.coreProblem)}.` : '',
     features ? `Core features should include ${features}.` : '',
     nice ? `Optional enhancements can include ${nice}.` : '',
     stack ? `Use this stack: ${stack}.` : '',
@@ -2988,8 +3003,73 @@ function normalizeExpandedPrompt(brief, rawIdea) {
   const prompt = (brief && typeof brief.expandedPrompt === 'string')
     ? brief.expandedPrompt.trim()
     : '';
+  if (expandedPromptConflictsWithBrief(prompt, brief || {})) {
+    return buildExpandedPromptFromBrief(brief || {}, rawIdea).trim();
+  }
   if (prompt.length >= 220) return prompt;
   return buildExpandedPromptFromBrief(brief || {}, rawIdea).trim();
+}
+
+function isConsoleBrief(brief) {
+  return /console|cli/i.test(brief.frontend || '')
+    || /script\/automation|console-based|no web framework/i.test(brief.backend || '')
+    || (/single local user/i.test(brief.auth || '') && /file-based|csv|json|local file/i.test(brief.database || ''));
+}
+
+function consoleSubject(brief, rawIdea) {
+  const text = `${brief.projectName || ''} ${rawIdea || ''}`.toLowerCase();
+  if (/inventory|stock|product/.test(text)) return 'products, stock quantities, and inventory records';
+  if (/employee|payroll|staff/.test(text)) return 'employee records';
+  if (/student|course|result/.test(text)) return 'student records';
+  if (/library|book/.test(text)) return 'books and library records';
+  if (/bank|account|atm/.test(text)) return 'accounts and transactions';
+  if (/expense|budget/.test(text)) return 'expenses and categories';
+  if (/contact/.test(text)) return 'contacts';
+  return 'records and items';
+}
+
+function consoleFeaturesFor(brief, rawIdea) {
+  const subject = consoleSubject(brief || {}, rawIdea);
+  if (/inventory|stock|product/.test(subject)) {
+    return ['Add product', 'Update product details', 'Delete product', 'Search/view products', 'Save/load inventory data'];
+  }
+  if (/employee/.test(subject)) {
+    return ['Add employee', 'Update employee details', 'Delete employee', 'Search/view employees', 'Save/load employee data'];
+  }
+  if (/student/.test(subject)) {
+    return ['Add student', 'Update student details', 'Delete student', 'Search/view students', 'Save/load student data'];
+  }
+  if (/books|library/.test(subject)) {
+    return ['Add book', 'Update book details', 'Remove book', 'Search/view books', 'Save/load library data'];
+  }
+  return ['Add record', 'Update record', 'Delete record', 'Search/view records', 'Save/load data'];
+}
+
+function expandedPromptConflictsWithBrief(prompt, brief) {
+  if (!prompt) return false;
+  if (isConsoleBrief(brief) && /\b(web[- ]?based|web app|frontend|backend|rest api|postgres|postgresql|mysql|mongodb|vercel|render|jwt|oauth|login|authentication)\b/i.test(prompt)) return true;
+  if (/thymeleaf|jsp|freemarker/i.test(brief.frontend || '') && /\breact|vite|separate frontend|frontend static|vercel\b/i.test(prompt)) return true;
+  return false;
+}
+
+function reconcileBriefForFinalStack(brief, rawIdea) {
+  if (!isConsoleBrief(brief || {})) return brief;
+  const b = { ...brief };
+  const subject = consoleSubject(b, rawIdea);
+  b.appType = 'Console/CLI application';
+  b.oneLiner = `A local console-based ${b.projectName || 'management system'} for managing ${subject}.`;
+  b.coreProblem = `Users need a simple local way to create, update, search, and persist ${subject} without the overhead of a hosted platform.`;
+  b.coreFeatures = consoleFeaturesFor(b, rawIdea);
+  b.niceToHave = /inventory|stock|product/.test(subject)
+    ? ['Low-stock warning', 'CSV export']
+    : ['CSV export', 'Basic summary report'];
+  b.outOfScope = ['Web hosting', 'REST API', 'Multi-user cloud authentication', 'Advanced analytics'];
+  const assumptions = Array.isArray(b.assumptions) ? b.assumptions : [];
+  b.assumptions = assumptions
+    .filter(a => !/web|frontend|backend|postgres|mysql|mongodb|vercel|render|jwt|oauth|host|cloud|multi-user/i.test(a))
+    .concat(['Assumed single local user', 'Assumed CSV/JSON file persistence'])
+    .filter((a, i, arr) => arr.findIndex(x => x.toLowerCase() === a.toLowerCase()) === i);
+  return b;
 }
 
 function syncIdeaInputWithExpandedPrompt(prompt) {
@@ -5108,6 +5188,7 @@ async function runGeneratePRD() {
     brief._vague = isVagueIdea(idea);
     const enforced = enforceStackConsistency(brief);
     brief = enforced.brief;
+    brief = reconcileBriefForFinalStack(brief, idea);
     brief.expandedPrompt = normalizeExpandedPrompt(brief, idea);
     _currentBrief = brief;
     syncIdeaInputWithExpandedPrompt(brief.expandedPrompt);

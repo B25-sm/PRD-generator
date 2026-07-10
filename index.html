@@ -3439,9 +3439,35 @@ function enforceStackConsistency(brief) {
     }
   }
 
-  // Hosting DB name should match database field (not invent Supabase when user chose another DB)
+  // Hosting must be a real deployment/provider combo, not just a database name.
   const db = (b.database || '').toLowerCase();
   let host = (b.hosting || '').toLowerCase();
+  const dbProviderFor = () => {
+    if (/mongo/.test(db)) return 'MongoDB Atlas (DB)';
+    if (/postgres/.test(db)) return 'Supabase/Neon (PostgreSQL DB)';
+    if (/mysql|mariadb/.test(db)) return 'Railway/PlanetScale (MySQL DB)';
+    if (/sqlite|file-based|csv|json/.test(db)) return 'local file storage';
+    return `${b.database || 'managed database'} (DB)`;
+  };
+  const appHostFor = () => {
+    const serverRendered = /\bthymeleaf|jsp|freemarker|velocity|jinja|templates?\b/i.test(b.frontend || '');
+    if (serverRendered) return `Render (${b.backend || 'backend app'}) + ${dbProviderFor()}`;
+    if (/react|vue|angular|svelte|next|nuxt|remix/i.test(b.frontend || '')) return `Vercel (frontend) + Render (backend) + ${dbProviderFor()}`;
+    return `Render (backend) + ${dbProviderFor()}`;
+  };
+  const hostingIsDbOnly = () => {
+    const h = (b.hosting || '').trim();
+    if (!h) return true;
+    if (/^(postgresql?s?|postgres|mysql|mariadb|mongodb|mongo|sqlite)(?:\s*\(?\s*db\s*\)?)?$/i.test(h)) return true;
+    const cats = classifyTechValue(h);
+    return cats.size > 0 && cats.has('database') && !cats.has('hosting');
+  };
+  if (hostingIsDbOnly()) {
+    const newHost = appHostFor();
+    fixes.push(`Hosting: "${b.hosting || '(empty)'}" → "${newHost}" (hosting must be a real deployment provider, not only a database name)`);
+    b.hosting = newHost;
+    host = (b.hosting || '').toLowerCase();
+  }
   const usesJvmTemplate = isJava && /\bthymeleaf|jsp|freemarker|velocity\b/i.test(b.frontend || '');
   if (usesJvmTemplate && /\bvercel\b/i.test(b.hosting || '')) {
     const dbName = /mysql/.test(db) ? 'MySQL (managed DB)' : /mariadb/.test(db) ? 'MariaDB (managed DB)' : /postgres/.test(db) ? 'PostgreSQL (managed DB)' : (b.database || 'managed database');
@@ -3457,12 +3483,6 @@ function enforceStackConsistency(brief) {
     fixes.push(`Hosting: removed Supabase — MongoDB projects should use MongoDB Atlas or the confirmed MongoDB host`);
     b.hosting = newHost;
     host = (b.hosting || '').toLowerCase();
-  }
-  if (/postgres|mysql|mariadb/.test(db) && !/supabase/.test(db) && /supabase/.test(host)) {
-    const dbHost = /mysql/.test(db) ? 'MySQL (DB)' : /mariadb/.test(db) ? 'MariaDB (DB)' : `${b.database.split(' ')[0]} (DB)`;
-    const newHost = b.hosting.replace(/supabase[^+]*/gi, dbHost).replace(/\(\s*db\s*\)/gi, '(DB)').replace(/\+\s*\+/g, '+').trim();
-    fixes.push(`Hosting: removed Supabase — using "${b.database}" as stated`);
-    b.hosting = newHost;
   }
 
   b._stackFixes = fixes;
@@ -4853,7 +4873,7 @@ const TECH_SETS = {
   backend: ['spring','spring boot','django','flask','fastapi','express','express.js','nestjs','nest','node','node.js','laravel','symfony','rails','ruby on rails','.net','asp.net','dotnet','gin','fiber','echo','phoenix','koa','hapi','adonis','strapi','ktor','micronaut','quarkus','graphql','apollo server','prisma','typeorm','sequelize','mongoose'],
   database: ['postgres','postgresql','postgre','mysql','mariadb','mongodb','mongo','sqlite','sql server','mssql','oracle','dynamodb','firestore','firebase','cassandra','couchdb','couchbase','neo4j','cockroachdb','planetscale','supabase','redis','snowflake','bigquery','elasticsearch','influxdb','timescaledb','duckdb','clickhouse'],
   auth: ['jwt','oauth','oauth2','oauth 2','openid','oidc','passport','passport.js','auth0','clerk','cognito','firebase auth','keycloak','okta','session','sessions','spring security','devise','lucia','supertokens','nextauth','next-auth','magic link','bcrypt','argon2','supabase auth','amazon cognito','workos','stytch','kinde'],
-  hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase'],
+  hosting: ['render','vercel','netlify','heroku','fly.io','fly io','railway','cloudflare','cloudflare pages','digitalocean','digital ocean','aws','amazon web services','ec2','gcp','google cloud','azure','linode','vps','surge','github pages','firebase hosting','supabase','neon','mongodb atlas','atlas','planetscale'],
   // integrations / services — belong in Other Tools, not Auth/Database/Frontend
   tools: ['stripe','paypal','razorpay','sendgrid','mailgun','resend','postmark','twilio','cloudinary','imgix','uploadcare','pusher','ably','algolia','typesense','sentry','datadog','new relic','segment','mixpanel','amplitude','hotjar','intercom','hubspot','slack','discord','bull','celery','sidekiq','rabbitmq','kafka','fivetran','airbyte'],
   // ── ML / Data / Security categories ──
@@ -4936,14 +4956,27 @@ function suggestTechTypo(fieldCat, value) {
     // Allowed edit distance scales gently with length: 1 for short, 2 for longer.
     const maxDist = tok.length >= 7 ? 2 : 1;
     let best = '', bestDist = Infinity;
-    const pools = [ownTerms, allKnownTerms()];
-    for (const pool of pools) {
-      for (const term of pool) {
-        if (Math.abs(term.length - tok.length) > maxDist) continue;
-        const d = editDistance(tok, term);
-        if (d < bestDist) { bestDist = d; best = term; }
-      }
-      if (bestDist <= maxDist) break; // prefer a same-category suggestion
+    for (const term of ownTerms) {
+      if (Math.abs(term.length - tok.length) > maxDist) continue;
+      const d = editDistance(tok, term);
+      if (d < bestDist) { bestDist = d; best = term; }
+    }
+    if (best && bestDist <= maxDist) return best;
+  }
+  return '';
+}
+
+function suggestAnyTechTypo(value) {
+  const tokens = (value || '').toLowerCase().match(/[a-z0-9.+#-]+/g) || [];
+  for (const tok of tokens) {
+    if (tok.length < 4) continue;
+    if (allKnownTerms().includes(tok)) continue;
+    const maxDist = tok.length >= 7 ? 2 : 1;
+    let best = '', bestDist = Infinity;
+    for (const term of allKnownTerms()) {
+      if (Math.abs(term.length - tok.length) > maxDist) continue;
+      const d = editDistance(tok, term);
+      if (d < bestDist) { bestDist = d; best = term; }
     }
     if (best && bestDist <= maxDist) return best;
   }
@@ -4966,7 +4999,15 @@ function techFieldError(fieldCat, value) {
   const cats = classifyTechValue(v);
   if (cats.has(fieldCat)) return '';     // contains a valid term for this field → OK
   if (cats.size === 0) {
-    // Unrecognized — but is it a near-miss typo of a real tech? Catch "spting"→spring.
+    const crossCatSuggestion = suggestAnyTechTypo(v);
+    if (crossCatSuggestion) {
+      const suggestedCats = classifyTechValue(crossCatSuggestion);
+      if (suggestedCats.size && !suggestedCats.has(fieldCat)) {
+        const others = [...suggestedCats].map(c => CAT_LABEL[c]).join(' / ');
+        return `“${v}” looks like ${others}, not ${CAT_LABEL[fieldCat]}. Enter ${exampleFor(fieldCat)}.`;
+      }
+    }
+    // Unrecognized — but is it a near-miss typo of a real tech in THIS field?
     const sug = suggestTechTypo(fieldCat, v);
     if (sug) return `“${v}” isn’t a known technology — did you mean “${sug}”?`;
     return '';                            // genuine niche/free-form value → allow
@@ -6683,7 +6724,7 @@ function buildFallbackBrief(idea) {
     outOfScope: ['Out-of-scope item 1', 'Out-of-scope item 2']
   };
   const defaults = {
-    web:          { frontend: 'React 18', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + PostgreSQL (DB) — all free tier', otherTools: 'None' },
+    web:          { frontend: 'React 18', backend: 'Node.js + Express', database: 'PostgreSQL 16', auth: 'JWT (JSON Web Tokens)', hosting: 'Vercel (frontend) + Render (backend) + Supabase/Neon (PostgreSQL DB) — all free tier', otherTools: 'None' },
     ml:           { language: 'Python 3.11', mlFramework: 'PyTorch 2.x', dataStore: 'S3 + Parquet', experiment: 'MLflow', serving: 'FastAPI', compute: 'Single GPU or CPU runtime', otherTools: 'None' },
     datasci:      { language: 'Python 3.11', libraries: 'pandas, NumPy, scikit-learn, statsmodels', dataSource: 'PostgreSQL', notebook: 'Jupyter', viz: 'matplotlib, seaborn', compute: 'Local + Colab', otherTools: 'None' },
     dataanalysis: { language: 'SQL + Python', dataSource: 'PostgreSQL', transform: 'SQL + dbt', bi: 'Metabase', otherTools: 'Excel' },

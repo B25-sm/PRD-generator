@@ -4589,9 +4589,12 @@ function techFieldError(fieldCat, value) {
   const v = (value || '').trim();
   if (!v) return '';
   // Deliberate not-applicable markers (e.g. a console app's "None (console application)",
-  // "N/A — runs locally", or any field mentioning "console") are never a typo or a
-  // wrong-category value — they're intentional free-form text, not an attempted tech name.
+  // "N/A — runs locally", any field mentioning "console", or the auto-generated
+  // script-stack backend "Python (script/automation … no web framework)") are never a
+  // typo or a wrong-category value — they're intentional free-form text describing the
+  // *absence* of a web framework, not an attempted tech name to be graded against a category.
   if (/^(none|n\/a)\b/i.test(v) || /console/i.test(v)) return '';
+  if (/script\/automation|no web framework/i.test(v)) return '';
   if (!fieldCat || !TECH_SETS[fieldCat]) return '';   // unknown/free-form field → never block
   const cats = classifyTechValue(v);
   if (cats.has(fieldCat)) return '';     // contains a valid term for this field → OK

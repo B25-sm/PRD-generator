@@ -3072,6 +3072,38 @@ function reconcileBriefForFinalStack(brief, rawIdea) {
   return b;
 }
 
+function mentionsUnconfirmedTech(text, confirmedText) {
+  const s = String(text || '').toLowerCase();
+  const confirmed = String(confirmedText || '').toLowerCase();
+  const techTerms = [
+    'react','vite','vue','angular','next.js','nextjs','node','express','nestjs',
+    'mongodb','mongo','postgres','postgresql','mysql','sqlite','supabase',
+    'spring','thymeleaf','django','flask','fastapi','laravel','rails',
+    'jwt','passport','nextauth','firebase','clerk','auth0','spring security',
+    'vercel','render','railway','netlify','streamlit','docker','kubernetes',
+    'redis','stripe','sendgrid','cloudinary','socket.io','websocket',
+    'pandas','numpy','scikit-learn','sklearn','pytorch','tensorflow',
+    'power bi','powerbi','tableau','metabase','owasp zap','semgrep','splunk','elk'
+  ];
+  return techTerms.some(term => {
+    const re = new RegExp('(^|[^a-z0-9.])' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9.]|$)', 'i');
+    return re.test(s) && !confirmed.includes(term);
+  });
+}
+
+function lockBriefToConfirmedInputs(brief) {
+  const d = getDomain((brief && brief.domain) || currentDomainId);
+  const confirmedText = d.stackFields.map(f => brief[f.key] || '').join(' | ');
+  const b = { ...brief };
+  if (Array.isArray(b.assumptions)) {
+    b.assumptions = b.assumptions.filter(a => !mentionsUnconfirmedTech(a, confirmedText));
+  }
+  if (expandedPromptConflictsWithBrief(b.expandedPrompt || '', b) || mentionsUnconfirmedTech(b.expandedPrompt || '', confirmedText)) {
+    b.expandedPrompt = buildExpandedPromptFromBrief(b, b.oneLiner || b.projectName || '');
+  }
+  return b;
+}
+
 function syncIdeaInputWithExpandedPrompt(prompt) {
   const ta = document.getElementById('idea-input');
   if (!ta || !prompt) return;
@@ -3232,7 +3264,19 @@ Respond ONLY with a JSON object. No markdown, no explanation, no code fences. Ju
 //  STAGE 2 — Build full PRD prompt from expanded brief (domain dispatch)
 // ═══════════════════════════════════════════════════════════
 function buildPRDPrompt(brief) {
-  return getDomain(brief.domain || currentDomainId).build(brief);
+  const domain = getDomain(brief.domain || currentDomainId);
+  const confirmedFields = domain.stackFields
+    .map(f => `- ${f.label}: ${brief[f.key] || 'None'}`)
+    .join('\n');
+  const sourceOfTruth = `CONFIRMED INPUT FIELDS ARE THE ONLY STACK SOURCE OF TRUTH.
+Use ONLY the technologies, hosting, database, auth, tools, language, libraries, data sources, and platforms listed below.
+If the expanded prompt, assumptions, project name, or feature text mentions a conflicting technology, ignore that conflicting mention completely.
+Do NOT introduce any framework, database, cloud host, auth provider, AI/ML library, BI tool, security tool, queue, cache, payment provider, email provider, or third-party integration unless it appears in these confirmed fields or is required by the selected domain template as a generic concept without naming a product.
+
+${confirmedFields}
+
+`;
+  return sourceOfTruth + domain.build(brief);
 }
 
 function inferWebStack(brief) {
@@ -5189,6 +5233,7 @@ async function runGeneratePRD() {
     const enforced = enforceStackConsistency(brief);
     brief = enforced.brief;
     brief = reconcileBriefForFinalStack(brief, idea);
+    brief = lockBriefToConfirmedInputs(brief);
     brief.expandedPrompt = normalizeExpandedPrompt(brief, idea);
     _currentBrief = brief;
     syncIdeaInputWithExpandedPrompt(brief.expandedPrompt);
@@ -6200,6 +6245,8 @@ async function confirmAndGenerate() {
   // Re-enforce stack consistency after user edits (e.g. fix bad auth before generating)
   const enforced = enforceStackConsistency(brief);
   brief = enforced.brief;
+  brief = reconcileBriefForFinalStack(brief, document.getElementById('idea-input').value.trim());
+  brief = lockBriefToConfirmedInputs(brief);
   if (enforced.fixes.length) {
     _dom.stackFields.forEach(f => {
       const el = document.getElementById('tc-' + f.key);
@@ -6251,6 +6298,11 @@ async function confirmAndGenerate() {
 
     const prdUserPrompt = buildPRDPrompt(brief);
     const prdSystemPrompt = `You are a Staff Engineer at a top-tier tech company writing a Product Requirements Document. Your PRDs are read by engineering leads, architects, and developers — they are professional specification documents, NOT code tutorials or code dumps.
+
+CONFIRMED INPUT FIELDS RULE — ABSOLUTE:
+The user's confirmed input fields are the only source of truth for stack, hosting, database, auth, tools, language, libraries, data sources, platforms, and integrations.
+Never introduce a technology that is not present in those confirmed fields.
+If any project description, expanded prompt, assumption, or example conflicts with the confirmed fields, ignore the conflicting text and follow the confirmed fields.
 
 WRITING STYLE — THIS IS NON-NEGOTIABLE:
 You write like Stripe, Google, and Airbnb write internal specs. Clear, precise, professional prose and structured tables. You describe WHAT the system does and HOW it behaves — not HOW to implement every line of code.

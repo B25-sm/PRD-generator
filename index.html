@@ -2792,7 +2792,7 @@ const PROJECT_IDEA_CATEGORIES = {
     label: 'Python', icon: '🐍', domain: 'web',
     stackHint: { basic: 'core Python (OOP, file handling)', intermediate: 'Python with automation/data libraries', advanced: 'Python full-stack (Flask/Django + REST API)' },
     basic: ['Student Management System', 'Library Management System', 'Bank Management System', 'ATM Simulation', 'Inventory Management System', 'Employee Payroll System', 'Quiz Application (CLI/GUI)', 'Contact Book', 'Password Manager (basic encryption)', 'File Organizer (auto-sort files)'],
-    intermediate: ['Web Scraper (jobs/news/products)', 'Email Automation Script', 'PDF Merger/Splitter Tool', 'Image Resizer Tool', 'Log Analyzer', 'Expense Tracker (CLI/GUI)', 'Chat Application (socket programming)', 'URL Shortener', 'Weather App (API-based)', 'Data Analysis Dashboard (Pandas + Matplotlib)', 'Interactive Dashboard (Streamlit)'],
+    intermediate: ['Web Scraper (jobs/news/products)', 'Email Automation Script', 'PDF Merger/Splitter Tool', 'Image Resizer Tool', 'Log Analyzer', 'Expense Tracker (CLI/GUI)', 'Chat Application (socket programming)', 'URL Shortener', 'Weather App (API-based)'],
     advanced: ['Blog Website (Flask/Django)', 'E-commerce Backend', 'Job Portal Backend', 'REST API (Flask/FastAPI)', 'Authentication System (JWT/Login)', 'AI Chatbot (Python + NLP)', 'Face Recognition System', 'Recommendation System', 'Fraud Detection System', 'Voice Assistant', 'Automation Bot (LinkedIn/WhatsApp tasks)', 'Full Stack Python App (Django + React)']
   },
   django: {
@@ -3133,6 +3133,9 @@ function addTool(existing, tool) {
 }
 
 function applyExplicitStackFromIdea(idea, brief) {
+  // Web-domain-only: it writes web fields (Node/MongoDB/React/JWT/Vercel). Non-web
+  // domains have their own schemas, so skip it there.
+  if (brief && brief.domain && brief.domain !== 'web') return brief;
   const text = ' ' + (idea || '').toLowerCase() + ' ';
   const explicitWebStack = /\bnode(?:\.js|js)?\b|express|mongodb|mongo db|socket\.io|websocket|real[- ]?time|vercel|render|frontend|backend|account|log(?:ging)? in|login|authentication|auth\b/.test(text);
   if (!explicitWebStack) return brief;
@@ -3185,9 +3188,14 @@ function applyExplicitStackFromIdea(idea, brief) {
 
 function applyPickedIdeaStack(brief) {
   if (!_pendingPickedIdea) return brief;
-  if (_pendingPickedIdea.domain !== currentDomainId || _pendingPickedIdea.level !== currentLevel) return brief;
+  if (_pendingPickedIdea.domain !== currentDomainId) return brief;
 
-  const { categoryKey, ideaName, level } = _pendingPickedIdea;
+  const { categoryKey, ideaName } = _pendingPickedIdea;
+  // Data-viz picks are essentially level-independent — don't drop the deterministic
+  // stack just because the user nudged the complexity pill after picking. Every other
+  // category still bails on a level change so the LLM can re-scope for the new level.
+  if (categoryKey !== 'pyviz' && _pendingPickedIdea.level !== currentLevel) return brief;
+  const level = currentLevel;
   const name = (ideaName || '').toLowerCase();
   const b = { ...brief };
   const fixes = [...(b._pendingFixes || [])];
@@ -3210,20 +3218,6 @@ function applyPickedIdeaStack(brief) {
       else if (/pdf/.test(name)) set('otherTools', 'PyPDF2 or pypdf', 'selected from the Python project library');
       else if (/image resizer/.test(name)) set('otherTools', 'Pillow', 'selected from the Python project library');
       else set('otherTools', 'None', 'selected from the Python project library');
-    } else if (/interactive dashboard|streamlit/.test(name)) {
-      set('frontend', 'Streamlit UI', 'selected from the Python project library');
-      set('backend', 'Python + Streamlit', 'selected from the Python project library');
-      set('database', 'CSV files or SQLite', 'selected from the Python project library');
-      set('auth', 'None or simple password gate', 'selected from the Python project library');
-      set('hosting', 'Streamlit Community Cloud', 'selected from the Python project library');
-      set('otherTools', 'pandas, Plotly', 'selected from the Python project library');
-    } else if (/data analysis dashboard/.test(name)) {
-      set('frontend', 'Streamlit or Dash UI', 'selected from the Python project library');
-      set('backend', 'Python + pandas', 'selected from the Python project library');
-      set('database', 'CSV files or SQLite', 'selected from the Python project library');
-      set('auth', 'None (single analyst)', 'selected from the Python project library');
-      set('hosting', 'Streamlit Community Cloud or Render', 'selected from the Python project library');
-      set('otherTools', 'pandas, Matplotlib', 'selected from the Python project library');
     } else {
       set('frontend', 'HTML/CSS + Jinja templates', 'selected from the Python project library');
       set('backend', /weather/.test(name) ? 'Flask (Python)' : 'FastAPI or Flask (Python)', 'selected from the Python project library');
@@ -3231,6 +3225,41 @@ function applyPickedIdeaStack(brief) {
       set('auth', /url shortener/.test(name) ? 'None for public links; optional JWT admin login' : 'None or simple session auth', 'selected from the Python project library');
       set('hosting', 'Render (Python web service)', 'selected from the Python project library');
       set('otherTools', /weather/.test(name) ? 'Requests, external weather API' : 'None', 'selected from the Python project library');
+    }
+  } else if (categoryKey === 'pyviz') {
+    // Data-visualization / pandas projects live in the Data Analysis domain, so we set
+    // that domain's fields (language / dataSource / transform / bi / otherTools) — NOT a
+    // web frontend/backend/host. These are local analysis scripts & dashboards, never a
+    // React/Flask/MongoDB web app, so the stack is fixed deterministically here rather
+    // than left to the Stage-1 model (which otherwise reframes them as web apps).
+    const reason = 'selected from the Python / Pandas data-viz library';
+    set('language', 'Python', reason);
+    set('transform', 'pandas', reason);
+    if (/interactive dashboard|streamlit/.test(name)) {
+      set('dataSource', 'CSV files or SQLite', reason);
+      set('bi', 'Streamlit + Plotly', reason);
+      set('otherTools', 'None', reason);
+    } else if (/stock price/.test(name)) {
+      set('dataSource', 'yfinance API / CSV files', reason);
+      set('bi', 'Plotly or Matplotlib', reason);
+      set('otherTools', 'yfinance', reason);
+    } else if (/financial report/.test(name)) {
+      set('dataSource', 'CSV / Excel files', reason);
+      set('bi', 'Matplotlib', reason);
+      set('otherTools', 'openpyxl, ReportLab (PDF export)', reason);
+    } else if (/excel automation/.test(name)) {
+      set('dataSource', 'Excel files (.xlsx)', reason);
+      set('bi', 'Matplotlib or native Excel charts', reason);
+      set('otherTools', 'openpyxl', reason);
+    } else if (/csv to insights|data cleaning/.test(name)) {
+      set('dataSource', 'CSV / Excel files', reason);
+      set('bi', 'Matplotlib', reason);
+      set('otherTools', 'None', reason);
+    } else {
+      // Data Analysis Dashboard, Sales Analysis, Survey Analyzer, COVID/Trend Analyzer …
+      set('dataSource', 'CSV files or SQLite', reason);
+      set('bi', 'Matplotlib + Seaborn', reason);
+      set('otherTools', 'Jupyter Notebook', reason);
     }
   }
 
@@ -3378,6 +3407,10 @@ function enforceStackConsistency(brief) {
   // web-stack auto-corrections below apply, and "java"/"python" substring matches would
   // otherwise wrongly force e.g. auth back to "JWT + Spring Security" for a console app.
   if (/console/i.test(b.frontend || '')) { b._stackFixes = fixes; return { brief: b, fixes }; }
+  // Non-web domains (Data Analysis / Data Science / ML / Security) have their own field
+  // schema — the web auth/ORM/hosting normalization below doesn't apply and would inject
+  // bogus fixes like "Hosting → Render" onto a local pandas dashboard.
+  if (b.domain && b.domain !== 'web') { b._stackFixes = fixes; return { brief: b, fixes }; }
   const be = (b.backend || '').toLowerCase();
   const fe = (b.frontend || '').toLowerCase();
   const auth = (b.auth || '').toLowerCase();
@@ -3505,6 +3538,11 @@ function enforceStackConsistency(brief) {
 // with no explicit language it does nothing, and it only forces console mode on an
 // unambiguous script signal — a real web app is never converted.
 function correctLanguageAndScope(idea, brief) {
+  // Web-domain-only logic: it reframes ideas as web / script / console apps by writing
+  // frontend/backend/database/hosting. The Data-Analysis, Data-Science, ML and Security
+  // domains have their own field schemas (language / dataSource / bi / …), so a pandas
+  // data-viz idea must NOT be dragged onto the console/CLI path here.
+  if (brief && brief.domain && brief.domain !== 'web') return brief;
   const text = ' ' + (idea || '').toLowerCase() + ' ';
   const LANGS = [
     { name: 'Python', re: /\bpython\b|\bpandas\b|\bflask\b|\bdjango\b|\bfastapi\b/, isBackend: b => /python|flask|django|fastapi/.test(b), webFw: () => /\bdjango\b/.test(text) ? 'Django' : /\bfastapi\b/.test(text) ? 'FastAPI' : 'Flask (Python)' },

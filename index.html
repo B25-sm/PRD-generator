@@ -7088,8 +7088,15 @@ async function downloadPDF() {
     iDoc.write(buildPDFHTML(rawMarkdown));
     iDoc.close();
 
-    // Wait for fonts + layout
-    await new Promise(r => setTimeout(r, 1600));
+    // Wait for fonts to ACTUALLY finish loading (a blind fixed delay used to fire the
+    // capture before the Google Fonts @import resolved on slow connections, silently
+    // falling back to system fonts). Cap it so a slow/blocked font CDN can't hang export.
+    await Promise.race([
+      (iDoc.fonts && iDoc.fonts.ready) ? iDoc.fonts.ready : Promise.resolve(),
+      new Promise(r => setTimeout(r, 2500))
+    ]);
+    // Small buffer for final layout/paint.
+    await new Promise(r => setTimeout(r, 300));
 
     const iWin = iframe.contentWindow;
     const iBody = iDoc.body;
@@ -7116,15 +7123,6 @@ async function downloadPDF() {
 
     for (let i = 0; i < elements.length; i++) {
       const el = elements[i];
-      const rect = el.getBoundingClientRect.call(el) || el.getBoundingClientRect();
-
-      // Use iframe's coordinate system
-      const elRect = el.getBoundingClientRect
-        ? (() => {
-            const r = iWin.document.createElement('div');
-            return el.getBoundingClientRect();
-          })()
-        : null;
 
       // Canvas-render this single element
       const canvas = await html2canvas(el, {

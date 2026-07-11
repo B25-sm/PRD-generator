@@ -4458,6 +4458,22 @@ function estimateTokens(str) {
   return Math.ceil((str || '').length / 4);
 }
 
+// Pick the model to START a request on, given its size. Prefers chain order (quality),
+// but skips any model whose TPM can't hold input + a minimum answer + margin — so a
+// large prompt goes straight to a bigger-TPM model (e.g. Llama 4 Scout at 30K) instead
+// of failing on the 12K primary first. The reactive 413 handler in callGroq still
+// backstops cases where the estimate under-counts or the rolling window is already full.
+function pickModelForRequest(chain, systemPrompt, userPrompt) {
+  const input = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+  const need = input + GROQ_LIMITS.minCompletionTokens + GROQ_LIMITS.tpmSafetyMargin;
+  const avail = chain.filter(m => !isModelExhaustedToday(m));
+  if (!avail.length) return pickModel(chain) || chain[0];
+  const inOrder = avail.find(m => (MODEL_LIMITS[m]?.tpm || 0) >= need);
+  if (inOrder) return inOrder;
+  // Nothing in preference order has room — fall back to the largest-TPM available.
+  return avail.slice().sort((a, b) => (MODEL_LIMITS[b]?.tpm || 0) - (MODEL_LIMITS[a]?.tpm || 0))[0];
+}
+
 // Largest max_tokens we can request so that (input + max_tokens) stays under the
 // given model's TPM limit. `model` may be omitted to fall back to the primary
 // heavy model's limit (kept for any legacy call sites).
@@ -4831,7 +4847,7 @@ async function generateFullPRD(systemPrompt, userPrompt, brief, onProgress) {
   const expected = expectedSectionHeadings(userPrompt);
   const endMarker = `*End of PRD — ${brief.projectName} v1.0*`;
   let totalTokens = 0;
-  let model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
+  let model = pickModelForRequest(HEAVY_CHAIN, systemPrompt, userPrompt);
   const maxTok = budgetMaxTokens(model, systemPrompt, userPrompt, MAX_TOKENS);
   let res = await callGroq({
     systemPrompt,

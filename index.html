@@ -2045,6 +2045,7 @@ button, input, textarea, select { min-width: 0; max-width: 100%; }
   Groq API · Free tier · Your key stays in your browser ·
   <a href="https://console.groq.com" target="_blank">Get API Key</a> ·
   <a href="https://vercel.com" target="_blank">Deploy on Vercel</a>
+  · <span style="opacity:0.6;">build 2026-07-11.1</span>
 </footer>
 
 <!-- marked.js for Markdown → HTML -->
@@ -4480,7 +4481,13 @@ function pickModelForRequest(chain, systemPrompt, userPrompt) {
 function budgetMaxTokens(model, systemPrompt, userPrompt, desiredMax) {
   const tpm = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimit;
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
-  const room = tpm - inputTokens - GROQ_LIMITS.tpmSafetyMargin;
+  // Groq's per-minute limit is a ROLLING window: this request's (input + max_tokens)
+  // is added to whatever was already spent in the last 60s. Reserving the whole TPM
+  // for one call meant any leftover usage from a prior attempt tipped the next request
+  // over the limit → a 413 even on a tiny prompt. Subtract the window usage so the
+  // reserved output leaves room for what's already been spent.
+  const usedInWindow = model ? getTokensUsedLastMinute(model) : 0;
+  const room = tpm - inputTokens - usedInWindow - GROQ_LIMITS.tpmSafetyMargin;
   return Math.max(GROQ_LIMITS.minCompletionTokens, Math.min(desiredMax, room));
 }
 
@@ -4495,19 +4502,22 @@ function budgetMaxTokens(model, systemPrompt, userPrompt, desiredMax) {
 // `model` scopes the check to THAT model's own TPM bucket and its own token log —
 // each Groq model has a separate quota, so a fallback model's usage must never be
 // judged against a different model's limit (or vice versa).
-async function waitForGroqQuota(model) {
+async function waitForGroqQuota(model, reserve = 0) {
   if (!model) model = pickModel(HEAVY_CHAIN) || HEAVY_CHAIN[0];
   const limit = (MODEL_LIMITS[model] && MODEL_LIMITS[model].tpm) || GROQ_LIMITS.tpmLimitPerMin;
   const safety = GROQ_LIMITS.tpmSafetyMarginTokens;
 
+  // `reserve` = tokens THIS request will add (input + max_tokens). Including it means we
+  // wait until the rolling window has room for the whole request, not just until it's
+  // merely below the limit — which is what let a request fire and then 413.
   const used = getTokensUsedLastMinute(model);
-  if (used + safety < limit) return; // room → go immediately
+  if (used + reserve + safety <= limit) return; // room for the whole request → go immediately
 
   // Compute ONE wait that frees enough tokens, so we show a single continuous
   // countdown instead of restarting the timer every few seconds.
   const now = Date.now();
   const log = getTokenLog().filter(e => e.model === model && now - e.ts < 60 * 1000).sort((a, b) => a.ts - b.ts);
-  const needToFree = (used + safety) - limit;
+  const needToFree = (used + reserve + safety) - limit;
   let freed = 0;
   let clearAt = now + 60_000; // worst case: a full window
   for (const e of log) {
@@ -4558,7 +4568,10 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
   // like Stage 1 "understand your idea" (≤1200 tokens) skip this so the review
   // panel appears promptly — the reactive 429 handler still covers them.
   if (isHeavyTier && maxTokens > 1200) {
-    await waitForGroqQuota(model);
+    // Reserve = the tokens this call will actually add to the rolling window, so we
+    // wait for room for the WHOLE request rather than firing one that then 413s.
+    const reserve = estimateTokens(systemPrompt) + estimateTokens(userPrompt) + maxTokens;
+    await waitForGroqQuota(model, reserve);
   }
 
   const response = await fetch(GROQ_API_URL, {

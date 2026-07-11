@@ -4647,6 +4647,25 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
         await new Promise(r => setTimeout(r, 400));
         return callGroq({ systemPrompt, userPrompt, maxTokens: newMaxTokens, temperature, model, chain }, retryCount + 1, tpmResetCycle);
       }
+
+      // Output can't shrink any further (input alone already crowds this model's TPM).
+      // Rather than fail, switch to the chain's largest-TPM model that still has room
+      // for the input + a minimum answer — e.g. Llama 4 Scout (30K) vs 70B (12K). The
+      // largest model is picked, so this can't loop (no even-bigger model to escalate
+      // to afterward), and retryCount resets so the new model keeps its own shrink path.
+      const roomNeeded = inputTokens + GROQ_LIMITS.minCompletionTokens + GROQ_LIMITS.tpmSafetyMargin;
+      const bigger = (chain || HEAVY_CHAIN)
+        .filter(m => m !== model && !isModelExhaustedToday(m) && (MODEL_LIMITS[m]?.tpm || 0) >= roomNeeded)
+        .sort((a, b) => (MODEL_LIMITS[b].tpm || 0) - (MODEL_LIMITS[a].tpm || 0))[0];
+      if (bigger) {
+        setProgress(null, `🔁 Request too large for ${modelName(model)} — switching to ${modelName(bigger)} (higher per-minute limit)…`, '');
+        await new Promise(r => setTimeout(r, 400));
+        // Re-expand the output budget to the bigger model's ample room (don't inherit
+        // the tiny max_tokens we were forced into on the smaller model, which would
+        // truncate the PRD and force extra continuation calls).
+        const biggerMax = budgetMaxTokens(bigger, systemPrompt, userPrompt, Math.max(maxTokens, MAX_TOKENS));
+        return callGroq({ systemPrompt, userPrompt, maxTokens: biggerMax, temperature, model: bigger, chain }, 0, tpmResetCycle);
+      }
     }
     throw new Error('Your tech-stack details pushed the request over Groq\'s per-minute token limit. Try shortening the "Other Tools" field (or wait ~1 minute and retry).');
   }

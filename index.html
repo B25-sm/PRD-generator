@@ -4968,7 +4968,10 @@ const TECH_SETS = {
     'react','vue','angular','svelte','sveltekit','next.js','nextjs','next','nuxt','solid','solidjs','qwik','astro','remix',
     'thymeleaf','blazor','jquery','ember','backbone','preact','lit','htmx',
     // markup & server-side templating engines — legit "frontend" for classic server-rendered apps
-    'html','html5','css','css3','jinja','jinja2','ejs','pug','handlebars','mustache','nunjucks','liquid','erb','razor','twig','templates',
+    'html','html5','css','css3','jinja','jinja2','ejs','pug','handlebars','mustache','nunjucks','liquid','erb','razor','twig',
+    // singular/compound forms so "Django Template Engine", "Blade Templates", "JSP pages"
+    // etc. pass — a template engine IS the frontend of a server-rendered app
+    'templates','template','templating','template engine','blade','jsp','freemarker','velocity',
     'material-ui','mui','tailwind','bootstrap','chakra','vuetify','antd','ant design',
     // state management & client data — NOT auth
     'redux','redux toolkit','rtk','zustand','mobx','recoil','jotai','pinia','vuex','ngrx',
@@ -5294,6 +5297,20 @@ function renderBriefCard(brief) {
     const el = document.getElementById('tc-' + f.key);
     const v = brief[f.key];
     el.value = (v && v !== 'None') ? v : '';
+  });
+
+  // AI-INFERRED values must NEVER hard-block the user: if Stage 1 (or a stale value
+  // carried over from a category switch) suggested something our validator rejects
+  // for that category, auto-replace it with the explicit "None" marker — validation
+  // allows it, the Generate button stays enabled, and the user can type the right
+  // value if they want. Only USER-TYPED input gets hard live validation (via oninput).
+  d.stackFields.forEach(f => {
+    const el = document.getElementById('tc-' + f.key);
+    if (el && el.value && f.cat && techFieldError(f.cat, el.value)) {
+      console.warn(`Auto-fill "${el.value}" fails ${f.cat} validation — replaced with "None" so generation isn't blocked`);
+      el.value = 'None';
+      brief[f.key] = 'None';
+    }
   });
 
   // Reset any stale validation state, then validate the freshly inferred values.

@@ -4540,9 +4540,11 @@ async function waitForGroqQuota(model, reserve = 0) {
   }
   const waitSec = Math.max(5, Math.ceil((clearAt - now) / 1000) + 2);
 
+  // No trailing time here — waitWithCountdown() live-appends "resuming in Xs" to this
+  // header every second, so it always agrees with the countdown ring below it.
   setProgress(
     null,
-    `⏳ ${modelName(model)} token quota ${used.toLocaleString()}/${limit.toLocaleString()}/min — refilling, then continuing…`,
+    `⏳ ${modelName(model)} token quota ${used.toLocaleString()}/${limit.toLocaleString()}/min — refilling`,
     undefined
   );
   await waitWithCountdown(waitSec, {
@@ -4651,11 +4653,11 @@ async function callGroq({ systemPrompt, userPrompt, maxTokens = 1000, temperatur
     _rateLimitSession.streakPauses = (_rateLimitSession.streakPauses || 0) + 1;
 
     const phaseTag = (_genPhase === 'understand') ? 'understanding your idea' : 'generating PRD';
-    // No seconds in the header line — the countdown panel owns the live timer, so a
-    // fixed number here would disagree with the ring and look broken.
+    // No fixed seconds here — waitWithCountdown() live-appends "resuming in Xs" to this
+    // header every second, so it always matches the countdown ring below it.
     setProgress(
       null,
-      `⏳ Waiting out Groq's free-tier limit while ${phaseTag} — continuing automatically…`,
+      `⏳ Waiting out Groq's free-tier limit while ${phaseTag}`,
       undefined
     );
     await waitWithCountdown(waitSec, {
@@ -6735,10 +6737,19 @@ function waitWithCountdown(totalSec, opts = {}) {
   // never a cumulative figure from unrelated proactive refreshes.
   const priorWaited = priorWaitedSec;
 
+  // ONE consistent time story: the top progress header gets the SAME live remaining
+  // time as the countdown ring, refreshed every tick — never a stale fixed number
+  // that disagrees with the ring and confuses the user about how long the wait is.
+  const labelEl = document.getElementById('progress-label');
+  const baseLabel = labelEl ? labelEl.textContent.replace(/\s*·\s*resuming in.*$/i, '') : '';
+
   return new Promise(resolve => {
     let remaining = totalSec;
 
     const render = () => {
+      if (labelEl && baseLabel) {
+        labelEl.textContent = `${baseLabel} · resuming in ${formatWaitTime(remaining)}`;
+      }
       if (!panel) return;
       const pauseLeft = formatWaitTime(remaining);
       const budgetFmt = formatWaitTime(budget);
@@ -6761,10 +6772,12 @@ function waitWithCountdown(totalSec, opts = {}) {
         : `Auto-retry ${attempt} of ${maxAttempts}`;
       // Single, consistent wait meter: for a 429 streak it climbs toward the same
       // daily-cap threshold (budget) that the line below references — one story, one
-      // number. Other modes just show this wait's own elapsed time.
+      // number. Single-pause modes show the pause's TOTAL length instead of a second
+      // running counter ("Xs waited so far") that competed with the countdown and
+      // confused users about how long the wait actually is.
       const waitedMeter = (mode === 'retry')
         ? `${totalWaitedFmt} of ~${budgetFmt} waited`
-        : `${totalWaitedFmt} waited so far`;
+        : `${formatWaitTime(pauseLen)} pause total`;
       const attemptRow =
         `<div class="attempt-track">` +
           (countsAsPause ? `<span class="attempt-count">Pause #${pauseNo} this PRD</span>` : `<span class="attempt-count">Quota refresh</span>`) +
@@ -6826,6 +6839,9 @@ function waitWithCountdown(totalSec, opts = {}) {
       if (remaining <= 0) {
         clearInterval(tick);
         _rateLimitSession.elapsedSec += pauseLen;
+        // Timer done → the very next thing is the resumed request; say so instead of
+        // leaving a stale "resuming in 1s" in the header while it fires.
+        if (labelEl && baseLabel) labelEl.textContent = `${baseLabel} · continuing now…`;
         hideRateWaitPanel();
         resolve();
       } else {

@@ -4464,14 +4464,27 @@ function estimateTokens(str) {
 // large prompt goes straight to a bigger-TPM model (e.g. Llama 4 Scout at 30K) instead
 // of failing on the 12K primary first. The reactive 413 handler in callGroq still
 // backstops cases where the estimate under-counts or the rolling window is already full.
+//
+// Crucially this is ROLLING-WINDOW aware: Groq's TPM is a rolling 60s budget, so a model
+// whose window is already near-full from a prior call has little room RIGHT NOW even
+// though its full TPM is large. Preferring a model with room now (each model has its own
+// separate quota bucket) avoids parking in a long proactive waitForGroqQuota() wait when
+// another chain model — e.g. an untouched Llama 4 Scout at 30K — could serve immediately.
 function pickModelForRequest(chain, systemPrompt, userPrompt) {
   const input = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
   const need = input + GROQ_LIMITS.minCompletionTokens + GROQ_LIMITS.tpmSafetyMargin;
   const avail = chain.filter(m => !isModelExhaustedToday(m));
   if (!avail.length) return pickModel(chain) || chain[0];
+  // 1) Prefer chain order among models that have room in their CURRENT rolling window —
+  //    these serve now with no wait.
+  const roomNow = m => (MODEL_LIMITS[m]?.tpm || 0) - getTokensUsedLastMinute(m);
+  const readyInOrder = avail.find(m => roomNow(m) >= need);
+  if (readyInOrder) return readyInOrder;
+  // 2) None free right now → prefer chain order among models whose FULL TPM can hold it
+  //    (we'll wait out this model's window, but it's the best-quality one that fits).
   const inOrder = avail.find(m => (MODEL_LIMITS[m]?.tpm || 0) >= need);
   if (inOrder) return inOrder;
-  // Nothing in preference order has room — fall back to the largest-TPM available.
+  // 3) Nothing in preference order fits — fall back to the largest-TPM available.
   return avail.slice().sort((a, b) => (MODEL_LIMITS[b]?.tpm || 0) - (MODEL_LIMITS[a]?.tpm || 0))[0];
 }
 
